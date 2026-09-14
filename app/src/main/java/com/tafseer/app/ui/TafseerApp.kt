@@ -4,8 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MenuBook
@@ -67,7 +70,6 @@ import com.tafseer.app.domain.TafseerUiState
 @Composable
 fun TafseerApp(viewModel: TafseerViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
-
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -79,12 +81,10 @@ fun TafseerApp(viewModel: TafseerViewModel = viewModel()) {
                 onDreamChange = viewModel::updateDream,
                 onInterpret = viewModel::startInterpretation
             )
-
             is TafseerUiState.Analyzing -> AnalysisScreen(
                 state = current,
                 onAnswer = viewModel::answerQuestion
             )
-
             is TafseerUiState.Result -> ResultScreen(
                 result = current.result,
                 onEdit = viewModel::editCurrentDream,
@@ -153,11 +153,7 @@ private fun WritingScreen(
         Spacer(Modifier.height(10.dp))
         BrandHeader()
         Spacer(Modifier.height(20.dp))
-
-        Text(
-            text = "اكتب رؤياك",
-            style = MaterialTheme.typography.headlineLarge
-        )
+        Text("اكتب رؤياك", style = MaterialTheme.typography.headlineLarge)
 
         OutlinedTextField(
             value = editorValue,
@@ -173,15 +169,13 @@ private fun WritingScreen(
             maxLines = 12,
             placeholder = {
                 Text(
-                    text = "اكتب المنام كما تتذكره…",
+                    "اكتب المنام كما تتذكره…",
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f)
                 )
             },
             textStyle = MaterialTheme.typography.bodyLarge,
             shape = RoundedCornerShape(22.dp),
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.Sentences
-            )
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
         )
 
         Text(
@@ -192,9 +186,7 @@ private fun WritingScreen(
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f)
         )
 
-        if (error != null) {
-            ErrorBanner(error)
-        }
+        if (error != null) ErrorBanner(error)
 
         Button(
             onClick = onInterpret,
@@ -211,12 +203,11 @@ private fun WritingScreen(
             )
             Spacer(Modifier.width(9.dp))
             Text(
-                text = "فسّر الرؤيا",
+                "فسّر الرؤيا",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold
             )
         }
-
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -231,19 +222,23 @@ private fun ErrorBanner(message: String) {
         )
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.Top
         ) {
             Icon(
                 imageVector = Icons.Outlined.ErrorOutline,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .size(20.dp)
             )
             Spacer(Modifier.width(10.dp))
             Text(
                 text = message,
-                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 24.sp),
+                textAlign = TextAlign.Start,
                 color = MaterialTheme.colorScheme.error
             )
         }
@@ -267,29 +262,39 @@ private fun AnalysisScreen(
     ) {
         Spacer(Modifier.height(10.dp))
         BrandHeader()
-        Spacer(Modifier.height(56.dp))
 
-        Box(contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(
-                progress = { state.progress / 100f },
-                modifier = Modifier.size(126.dp),
-                strokeWidth = 7.dp,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+        if (state.question == null) {
+            Spacer(Modifier.height(54.dp))
+            Box(contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    progress = { state.progress / 100f },
+                    modifier = Modifier.size(118.dp),
+                    strokeWidth = 7.dp,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+                Text(
+                    "${state.progress}%",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.height(24.dp))
             Text(
-                text = "${state.progress}%",
-                fontSize = 30.sp,
-                fontWeight = FontWeight.Bold
+                text = state.stage.title,
+                style = MaterialTheme.typography.titleLarge,
+                textAlign = TextAlign.Center
             )
+            Spacer(Modifier.height(18.dp))
+        } else {
+            Spacer(Modifier.height(32.dp))
+            Text(
+                text = "سؤال قبل التفسير",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start
+            )
+            Spacer(Modifier.height(14.dp))
         }
-
-        Spacer(Modifier.height(26.dp))
-        Text(
-            text = if (state.question == null) state.stage.title else "سؤال للتوضيح",
-            style = MaterialTheme.typography.titleLarge,
-            textAlign = TextAlign.Center
-        )
-        Spacer(Modifier.height(18.dp))
 
         LinearProgressIndicator(
             progress = { state.progress / 100f },
@@ -304,7 +309,7 @@ private fun AnalysisScreen(
             ClarifyingQuestionCard(
                 question = question,
                 onAnswer = onAnswer,
-                modifier = Modifier.padding(top = 26.dp, bottom = 24.dp)
+                modifier = Modifier.padding(top = 22.dp, bottom = 24.dp)
             )
         }
     }
@@ -325,24 +330,49 @@ private fun ClarifyingQuestionCard(
     ) {
         Column(
             modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text(
-                text = question.title,
-                style = MaterialTheme.typography.titleMedium
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                Surface(
+                    modifier = Modifier.size(40.dp),
+                    shape = RoundedCornerShape(13.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Outlined.HelpOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(21.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = question.title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium.copy(lineHeight = 30.sp),
+                    textAlign = TextAlign.Start
+                )
+            }
 
             question.options.forEach { option ->
                 OutlinedButton(
                     onClick = { onAnswer(option.label) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(15.dp)
+                        .defaultMinSize(minHeight = 54.dp),
+                    shape = RoundedCornerShape(15.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 13.dp)
                 ) {
                     Text(
                         text = option.label,
-                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 24.sp),
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -358,7 +388,7 @@ private fun ClarifyingQuestionCard(
                     minLines = 2,
                     maxLines = 5,
                     placeholder = { Text(question.textHint) },
-                    textStyle = MaterialTheme.typography.bodyMedium,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(lineHeight = 25.sp),
                     shape = RoundedCornerShape(16.dp)
                 )
 
@@ -367,7 +397,7 @@ private fun ClarifyingQuestionCard(
                     enabled = textAnswer.text.isNotBlank(),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp),
+                        .height(54.dp),
                     shape = RoundedCornerShape(15.dp)
                 ) {
                     Text("متابعة", fontWeight = FontWeight.Bold)
@@ -405,16 +435,10 @@ private fun ResultScreen(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "التفسير",
-                style = MaterialTheme.typography.headlineSmall
-            )
+            Text("التفسير", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onEdit) {
-                Icon(
-                    imageVector = Icons.Outlined.Edit,
-                    contentDescription = "تعديل الرؤيا"
-                )
+                Icon(Icons.Outlined.Edit, contentDescription = "تعديل الرؤيا")
             }
         }
 
@@ -439,7 +463,8 @@ private fun ResultScreen(
             Text(
                 text = result.interpretation,
                 modifier = Modifier.padding(20.dp),
-                style = MaterialTheme.typography.bodyLarge
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Start
             )
         }
 
@@ -451,32 +476,33 @@ private fun ResultScreen(
             ) {
                 result.references.forEachIndexed { index, source ->
                     Column(modifier = Modifier.padding(vertical = 9.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = source.claim,
+                            modifier = Modifier.fillMaxWidth(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Start
+                        )
+                        Spacer(Modifier.height(7.dp))
+                        Surface(
+                            shape = RoundedCornerShape(50.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
                             Text(
-                                text = source.claim,
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
+                                text = relationLabel(source.relation),
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
-                            Surface(
-                                shape = RoundedCornerShape(50.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Text(
-                                    text = relationLabel(source.relation),
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
                         }
-                        Spacer(Modifier.height(6.dp))
+                        Spacer(Modifier.height(7.dp))
                         Text(
                             text = source.explanation,
                             style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Start,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
                         )
-                        if (source.relation != "contextual") {
+                        if (source.relation != "contextual" && source.sourceRef.isNotBlank()) {
                             Spacer(Modifier.height(5.dp))
                             Text(
                                 text = "${source.sourceTitle} — ${source.sourceRef}",
@@ -501,11 +527,13 @@ private fun ResultScreen(
                         Text(
                             text = point.title,
                             style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Start
                         )
                         Text(
                             text = point.explanation,
                             style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Start,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
                         )
                     }
@@ -522,7 +550,8 @@ private fun ResultScreen(
             ) {
                 Text(
                     text = result.whyThisInterpretation,
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Start
                 )
             }
         }
@@ -537,7 +566,8 @@ private fun ResultScreen(
                     result.alternatives.forEach { item ->
                         Text(
                             text = "• $item",
-                            style = MaterialTheme.typography.bodyMedium
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Start
                         )
                     }
                 }
@@ -559,23 +589,12 @@ private fun ResultScreen(
                 .height(56.dp),
             shape = RoundedCornerShape(18.dp)
         ) {
-            Icon(
-                imageVector = Icons.Outlined.Refresh,
-                contentDescription = null,
-                modifier = Modifier.size(21.dp)
-            )
+            Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(21.dp))
             Spacer(Modifier.width(8.dp))
             Text("رؤيا جديدة", fontWeight = FontWeight.Bold)
         }
-
         Spacer(Modifier.height(20.dp))
     }
-}
-
-private fun relationLabel(relation: String): String = when (relation) {
-    "direct" -> "نص مباشر"
-    "semantic" -> "استئناس بالمعنى"
-    else -> "قرينة سياقية"
 }
 
 @Composable
@@ -593,7 +612,8 @@ private fun DisclosureCard(
         Column {
             TextButton(
                 onClick = onToggle,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 11.dp)
             ) {
                 Text(
                     text = title,
@@ -603,16 +623,11 @@ private fun DisclosureCard(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Icon(
-                    imageVector = if (expanded) {
-                        Icons.Outlined.KeyboardArrowUp
-                    } else {
-                        Icons.Outlined.KeyboardArrowDown
-                    },
+                    imageVector = if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f)
                 )
             }
-
             if (expanded) {
                 Column(
                     modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp)
@@ -622,4 +637,10 @@ private fun DisclosureCard(
             }
         }
     }
+}
+
+private fun relationLabel(relation: String): String = when (relation) {
+    "direct" -> "نص مباشر"
+    "semantic" -> "استئناس بالمعنى"
+    else -> "قرينة سياقية"
 }
