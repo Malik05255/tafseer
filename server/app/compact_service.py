@@ -19,6 +19,11 @@ _STATUS_QUESTION_WORDS = {
     "ميت", "ام", "أم", "كان", "هو", "هي", "حاله", "حالة", "الان", "الآن",
 }
 _DECEASED_MARKERS = {"المرحوم", "مرحوم", "المتوفي", "متوفي", "المتوفى", "متوفى", "توفي", "ميت"}
+_REALITY_MARKERS = {"واقع", "واقعي", "حقيقي", "حاليا", "حالي", "يشغلك", "تفكيرك", "مرتبط", "علاقه", "علاقة"}
+_EMOTION_MARKERS = {"شعور", "شعرت", "احساس", "إحساس", "احسست", "أحسست"}
+_PERSON_MARKERS = {"جدي", "جد", "ابي", "أبي", "ابوي", "أبوي", "امي", "أمي", "زوج", "زوجه", "زوجة", "اخي", "أخي", "اختي", "أختي", "صديق", "مرحوم", "متوفى"}
+_EVENT_MARKERS = {"حفل", "اعتزال", "زواج", "مباراه", "مباراة", "فريق", "ملعب", "سفر", "عمل", "مدرسه", "مدرسة", "ذبح", "ذبايح", "ذبائح"}
+_TRANSITION_MARKERS = {"وافق", "رفض", "متردد", "تردد", "اعطى", "أعطى", "اخذ", "أخذ", "فتح", "اغلق", "أغلق", "دخل", "خرج"}
 
 
 class AnalysisTechnicalFailure(RuntimeError):
@@ -26,12 +31,7 @@ class AnalysisTechnicalFailure(RuntimeError):
 
 
 class TafseerService:
-    """Compact conversational tafseer flow.
-
-    Each user turn uses one model request in the normal path. The model either asks
-    one useful context question or returns the final structured result. This keeps
-    free-tier RPM usage low while preserving contextual questioning.
-    """
+    """Compact conversational tafseer flow with context sufficiency gates."""
 
     def __init__(self) -> None:
         self.models = ModelRouter()
@@ -47,11 +47,18 @@ class TafseerService:
             if str(a.get("question_text", "")).strip()
         }
         can_ask = len(answers) < settings.max_questions
+        minimum_questions = min(settings.max_questions, self._recommended_min_questions(dream))
 
         try:
             knowledge = self.knowledge.retrieve(dream, limit=10)
             prompt = TURN_PROMPT + "\n\n" + self._context(dream, answers, knowledge)
-            if not can_ask:
+            if can_ask and len(answers) < minimum_questions:
+                prompt += (
+                    f"\n\nهذه الرؤيا متعددة العناصر وتحتاج على الأقل {minimum_questions} إجابات توضيحية مؤثرة قبل النتيجة. "
+                    f"الموجود حاليًا {len(answers)} فقط. يجب في هذه الجولة إخراج action=question عن أهم مجهول واحد فقط. "
+                    "لا تسأل عن معلومة مذكورة أصلًا، ولا تجمع محورين في سؤال واحد."
+                )
+            elif not can_ask:
                 prompt += (
                     "\n\nبلغت المحادثة الحد الأقصى للأسئلة. ممنوع طرح سؤال جديد. "
                     "أخرج action=complete واختر طبيعة المنام الأقرب واشرح السبب دون استخدام غير محسوم."
@@ -59,6 +66,18 @@ class TafseerService:
 
             decision = await self.models.generate_json(SYSTEM_PROMPT, prompt)
             action = str(decision.get("action", "")).strip().lower()
+
+            # The model is not allowed to finish a complex dream before the minimum
+            # useful clarification budget is met. One repair call is permitted only
+            # when it ignored that rule.
+            if action != "question" and can_ask and len(answers) < minimum_questions:
+                forced_prompt = (
+                    prompt
+                    + "\n\nأنت حاولت إنهاء التأويل قبل اكتمال الحد الأدنى من السياق. ممنوع complete الآن. "
+                    "أعد JSON من نوع action=question فقط. اسأل عن مجهول واحد مؤثر لم يُذكر جوابه في النص أو الإجابات."
+                )
+                decision = await self.models.generate_json(SYSTEM_PROMPT, forced_prompt)
+                action = str(decision.get("action", "")).strip().lower()
 
             if action == "question" and can_ask:
                 question = self._question_from_decision(
@@ -78,7 +97,7 @@ class TafseerService:
                     prompt
                     + "\n\nالسؤال الذي اقترحته مكرر أو مركب أو يسأل عن معلومة مذكورة أصلًا. "
                     "اسأل سؤالًا واحدًا ذريًا عن مجهول واحد فقط، ولا تسأل عما حُسم في نص المنام. "
-                    "إن لم يبق سؤال مؤثر صالح فأخرج action=complete."
+                    "إن كان الحد الأدنى للسياق لم يكتمل فلابد من سؤال صالح، وإلا فأخرج action=complete."
                 )
                 decision = await self.models.generate_json(SYSTEM_PROMPT, repair_prompt)
                 if str(decision.get("action", "")).strip().lower() == "question":
@@ -95,9 +114,40 @@ class TafseerService:
                             question=question,
                         )
 
+                if can_ask and len(answers) < minimum_questions:
+                    fallback = self._fallback_context_question(answers, answered_ids)
+                    if fallback is not None:
+                        return InterpretResponse(
+                            status="question",
+                            progress_checkpoint=min(90, 44 + len(answers) * 10),
+                            question=fallback,
+                        )
+
             raw_result = decision.get("result")
             if not isinstance(raw_result, dict):
                 raise AnalysisTechnicalFailure("turn_result_missing")
+
+            if can_ask and self._result_needs_more_context(raw_result, answers, dream):
+                context_prompt = (
+                    prompt
+                    + "\n\nالنتيجة المقترحة ما زالت تعتمد على سياق لم يثبته المستخدم، أو صنفت المنام كحديث نفس/مختلط قبل اكتمال السياق. "
+                    "لا تعرض نتيجة الآن. أخرج action=question فقط عن أهم معلومة واحدة يمكن أن تغيّر هذا الترجيح."
+                )
+                followup = await self.models.generate_json(SYSTEM_PROMPT, context_prompt)
+                question = self._question_from_decision(
+                    {"need_question": True, "question": followup.get("question")},
+                    answered_ids,
+                    answered_question_texts,
+                    dream=dream,
+                )
+                if question is None:
+                    question = self._fallback_context_question(answers, answered_ids)
+                if question is not None:
+                    return InterpretResponse(
+                        status="question",
+                        progress_checkpoint=min(92, 50 + len(answers) * 10),
+                        question=question,
+                    )
 
             clean = self._sanitize_result(raw_result, knowledge)
             try:
@@ -143,6 +193,86 @@ class TafseerService:
             + json.dumps(knowledge, ensure_ascii=False, separators=(",", ":"))
             + "\n\nأي مصدر غير موجود أعلاه ممنوع اختراعه أو نسبته للقرآن أو السنة."
         )
+
+    @classmethod
+    def _recommended_min_questions(cls, dream: str) -> int:
+        normalized = cls._normalize_question_text(dream)
+        if len(dream.strip()) < 70:
+            return 0
+
+        themes = 0
+        for group in (_PERSON_MARKERS, _EVENT_MARKERS, _TRANSITION_MARKERS):
+            normalized_group = {cls._normalize_question_text(item) for item in group}
+            if any(marker and marker in normalized for marker in normalized_group):
+                themes += 1
+
+        if len(dream.strip()) >= 125 and themes >= 2:
+            return 2
+        if len(dream.strip()) >= 90 or themes >= 2:
+            return 1
+        return 0
+
+    @classmethod
+    def _answer_covers(cls, answers: list[dict], markers: set[str]) -> bool:
+        normalized_markers = {cls._normalize_question_text(item) for item in markers}
+        for answer in answers:
+            question_text = cls._normalize_question_text(str(answer.get("question_text", "")))
+            if any(marker and marker in question_text for marker in normalized_markers):
+                return True
+        return False
+
+    @classmethod
+    def _result_needs_more_context(cls, raw_result: dict, answers: list[dict], dream: str) -> bool:
+        if not isinstance(raw_result, dict):
+            return False
+
+        minimum_questions = cls._recommended_min_questions(dream)
+        if len(answers) < minimum_questions:
+            return True
+
+        nature = str(raw_result.get("nature", "")).strip().lower()
+        combined = " ".join(
+            str(raw_result.get(key, ""))
+            for key in ("interpretation", "why_this_interpretation", "nature_label")
+        )
+        combined_norm = cls._normalize_question_text(combined)
+        has_reality_context = cls._answer_covers(answers, _REALITY_MARKERS)
+
+        if nature == "daily_thoughts" and not has_reality_context:
+            return True
+        if nature == "mixed" and len(answers) < max(2, minimum_questions):
+            return True
+        if not has_reality_context and any(
+            marker in combined_norm
+            for marker in ("حديث النفس", "انشغال واقعي", "واقع", "تفاعلات اعتياديه", "تفاعلات اعتيادية")
+        ):
+            return True
+        return False
+
+    @classmethod
+    def _fallback_context_question(cls, answers: list[dict], answered_ids: set[str]) -> Question | None:
+        if not cls._answer_covers(answers, _REALITY_MARKERS) and "reality_context" not in answered_ids:
+            return Question(
+                id="reality_context",
+                title="هل الحدث الرئيسي في المنام مرتبط بواقعك الحالي أو يشغل تفكيرك هذه الفترة؟",
+                explanation="هذا يفرق بين حديث النفس والتأويل.",
+                options=[
+                    {"id": "yes", "label": "نعم، مرتبط بواقعي أو يشغلني"},
+                    {"id": "no", "label": "لا، لا علاقة مباشرة ولا يشغلني"},
+                ],
+                allow_text=True,
+                text_hint="اذكر العلاقة باختصار إن وجدت…",
+            )
+        if not cls._answer_covers(answers, _EMOTION_MARKERS) and "scene_emotion" not in answered_ids:
+            return Question(
+                id="scene_emotion",
+                title="ما كان شعورك في المشهد الأهم من المنام؟",
+                explanation="الشعور قد يغيّر معنى المشهد.",
+                options=[],
+                allow_text=True,
+                text_hint="مثلاً: فرح، ضيق، استغراب، خوف…",
+            )
+        return None
 
     @classmethod
     def _sanitize_result(cls, raw: dict, knowledge: list[dict]) -> dict:
