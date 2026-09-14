@@ -1,4 +1,7 @@
 import json
+import logging
+import re
+
 from pydantic import ValidationError
 
 from .config import settings
@@ -17,6 +20,15 @@ from .prompts import (
 from .providers import ModelRouter, ProviderUnavailable
 
 
+logger = logging.getLogger("tafseer.service")
+_ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
+_WORDS = re.compile(r"[\w\u0600-\u06FF]{2,}")
+
+
+class AnalysisTechnicalFailure(RuntimeError):
+    pass
+
+
 class TafseerService:
     def __init__(self) -> None:
         self.models = ModelRouter()
@@ -25,123 +37,155 @@ class TafseerService:
     async def interpret_step(self, request: InterpretRequest) -> InterpretResponse:
         dream = request.dream.strip()
         answers = [a.model_dump() for a in request.answers]
-        answered_ids = {a["question_id"] for a in answers}
-        can_ask = len(answers) < settings.max_questions
-        knowledge = self.knowledge.retrieve(dream)
-
-        base_context = self._context(dream, answers, knowledge, fact_map=None)
-        fact_map = await self._extract_facts(base_context)
-        compact_context = self._context(dream, answers, knowledge, fact_map=fact_map)
-        valid_fact_ids = {
-            item.get("id")
-            for item in fact_map.get("facts", [])
-            if isinstance(item, dict) and item.get("id")
+        answered_ids = {str(a.get("question_id", "")).strip() for a in answers}
+        answered_question_texts = {
+            self._normalize_question_text(str(a.get("question_text", "")))
+            for a in answers
+            if str(a.get("question_text", "")).strip()
         }
-
-        # Gate 1: before interpretation, actively ask for one missing piece of context
-        # when it can materially change the reading.
-        if can_ask:
-            question = await self._initial_context_question(compact_context, answered_ids)
-            if question is not None:
-                return InterpretResponse(
-                    status="question",
-                    progress_checkpoint=min(76, 34 + len(answers) * 14),
-                    question=question,
-                )
-
-        draft: dict = {}
-        critique: dict = {}
+        can_ask = len(answers) < settings.max_questions
 
         try:
-            draft = await self.models.generate_json(
-                SYSTEM_PROMPT,
-                DRAFT_PROMPT + "\n\n" + compact_context,
-            )
-            draft = self._sanitize_draft(draft, valid_fact_ids)
-        except (ProviderUnavailable, ValueError, KeyError, TypeError):
-            draft = {}
-
-        if draft:
-            try:
-                critique = await self.models.generate_json(
-                    SYSTEM_PROMPT,
-                    CRITIC_PROMPT
-                    + "\n\n"
-                    + compact_context
-                    + "\n\nملخص المرشحات المطلوب نقده:\n"
-                    + json.dumps(draft, ensure_ascii=False, separators=(",", ":")),
-                )
-            except (ProviderUnavailable, ValueError, KeyError, TypeError):
-                critique = {}
-
-        # Gate 2: if the critic discovers that the strongest reading depends on
-        # unknown user context, stop here and ask instead of forcing a conclusion.
-        if can_ask and self._critique_needs_context(critique, draft):
-            recovery_details = {
-                "stage": "critic",
-                "missing_context": critique.get("missing_context", []),
-                "unsupported_claims": critique.get("unsupported_claims", []),
-                "warnings": critique.get("warnings", []),
-                "uncertainties": draft.get("uncertainties", []) if isinstance(draft, dict) else [],
-                "required_assumptions": self._required_assumptions(draft),
+            knowledge = self.knowledge.retrieve(dream)
+            base_context = self._context(dream, answers, knowledge, fact_map=None)
+            fact_map = await self._extract_facts(base_context)
+            compact_context = self._context(dream, answers, knowledge, fact_map=fact_map)
+            valid_fact_ids = {
+                item.get("id")
+                for item in fact_map.get("facts", [])
+                if isinstance(item, dict) and item.get("id")
             }
-            question = await self._recovery_context_question(
-                compact_context,
-                recovery_details,
-                answered_ids,
+
+            if not valid_fact_ids:
+                raise AnalysisTechnicalFailure("fact_extraction_empty")
+
+            # Gate 1: ask before interpretation when one missing fact can materially
+            # change the reading.
+            if can_ask:
+                question = await self._initial_context_question(
+                    compact_context,
+                    answered_ids,
+                    answered_question_texts,
+                )
+                if question is not None:
+                    return InterpretResponse(
+                        status="question",
+                        progress_checkpoint=min(76, 34 + len(answers) * 14),
+                        question=question,
+                    )
+
+            draft = await self._build_draft(compact_context, valid_fact_ids)
+            critique = await self._build_critique(compact_context, draft)
+
+            # Gate 2: the critic found an assumption or ambiguity that can be resolved
+            # by asking the user, so ask instead of forcing a conclusion.
+            if can_ask and self._critique_needs_context(critique, draft):
+                recovery_details = {
+                    "stage": "critic",
+                    "missing_context": critique.get("missing_context", []),
+                    "unsupported_claims": critique.get("unsupported_claims", []),
+                    "warnings": critique.get("warnings", []),
+                    "uncertainties": draft.get("uncertainties", []),
+                    "required_assumptions": self._required_assumptions(draft),
+                }
+                question = await self._recovery_context_question(
+                    compact_context,
+                    recovery_details,
+                    answered_ids,
+                    answered_question_texts,
+                )
+                if question is not None:
+                    return InterpretResponse(
+                        status="question",
+                        progress_checkpoint=min(88, 62 + len(answers) * 10),
+                        question=question,
+                    )
+
+            final_context = compact_context
+            if draft:
+                final_context += "\n\nملخص المرشحات الداخلية:\n" + json.dumps(
+                    draft, ensure_ascii=False, separators=(",", ":")
+                )
+            if critique:
+                final_context += "\n\nمراجعة الناقد الداخلية:\n" + json.dumps(
+                    critique, ensure_ascii=False, separators=(",", ":")
+                )
+
+            outcome = await self._build_verified_result(
+                final_context=final_context,
+                compact_context=compact_context,
+                valid_fact_ids=valid_fact_ids,
+                answered_ids=answered_ids,
+                answered_question_texts=answered_question_texts,
+                can_ask=can_ask,
             )
-            if question is not None:
+            if isinstance(outcome, Question):
                 return InterpretResponse(
                     status="question",
-                    progress_checkpoint=min(88, 62 + len(answers) * 10),
-                    question=question,
+                    progress_checkpoint=min(94, 78 + len(answers) * 6),
+                    question=outcome,
                 )
+            return InterpretResponse(status="complete", progress_checkpoint=100, result=outcome)
 
-        final_context = compact_context
-        if draft:
-            final_context += "\n\nملخص المرشحات الداخلية:\n" + json.dumps(
-                draft, ensure_ascii=False, separators=(",", ":")
-            )
-        if critique:
-            final_context += "\n\nمراجعة الناقد الداخلية:\n" + json.dumps(
-                critique, ensure_ascii=False, separators=(",", ":")
-            )
-
-        outcome = await self._build_verified_result(
-            dream=dream,
-            final_context=final_context,
-            compact_context=compact_context,
-            valid_fact_ids=valid_fact_ids,
-            answered_ids=answered_ids,
-            can_ask=can_ask,
-        )
-        if isinstance(outcome, Question):
+        except AnalysisTechnicalFailure as exc:
+            logger.warning("analysis_technical_failure stage=%s", str(exc)[:80])
             return InterpretResponse(
-                status="question",
-                progress_checkpoint=min(94, 78 + len(answers) * 6),
-                question=outcome,
+                status="error",
+                progress_checkpoint=95,
+                error_code="analysis_pipeline_failed",
+                message=(
+                    "تعذر إكمال التحليل تقنيًا في هذه المحاولة. احتفظنا بنص المنام؛ "
+                    "أعد المحاولة بعد قليل."
+                ),
             )
-        return InterpretResponse(status="complete", progress_checkpoint=100, result=outcome)
+        except ProviderUnavailable:
+            logger.warning("analysis_technical_failure stage=provider_unavailable")
+            return InterpretResponse(
+                status="error",
+                progress_checkpoint=95,
+                error_code="provider_unavailable",
+                message=(
+                    "تعذر الوصول إلى مزود الذكاء الاصطناعي في هذه المحاولة. "
+                    "احتفظنا بنص المنام؛ أعد المحاولة بعد قليل."
+                ),
+            )
+        except Exception as exc:
+            logger.exception("analysis_unexpected_failure type=%s", type(exc).__name__)
+            return InterpretResponse(
+                status="error",
+                progress_checkpoint=95,
+                error_code="unexpected_analysis_error",
+                message=(
+                    "حدث خطأ أثناء التحليل ولم يتم إنشاء تفسير. "
+                    "احتفظنا بنص المنام ويمكنك إعادة المحاولة."
+                ),
+            )
 
     async def _initial_context_question(
         self,
         compact_context: str,
         answered_ids: set[str],
+        answered_question_texts: set[str],
     ) -> Question | None:
         try:
             decision = await self.models.generate_json(
                 SYSTEM_PROMPT,
                 QUESTION_PROMPT + "\n\n" + compact_context,
             )
-        except (ProviderUnavailable, ValidationError, ValueError, KeyError, TypeError):
-            return None
-        return self._question_from_decision(decision, answered_ids)
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("initial_question") from exc
+        return self._question_from_decision(
+            decision,
+            answered_ids,
+            answered_question_texts,
+        )
 
     async def _recovery_context_question(
         self,
         compact_context: str,
         trigger_details: dict,
         answered_ids: set[str],
+        answered_question_texts: set[str],
     ) -> Question | None:
         recovery_context = (
             compact_context
@@ -153,20 +197,39 @@ class TafseerService:
                 SYSTEM_PROMPT,
                 RECOVERY_QUESTION_PROMPT + "\n\n" + recovery_context,
             )
-        except (ProviderUnavailable, ValidationError, ValueError, KeyError, TypeError):
-            return None
-        return self._question_from_decision(decision, answered_ids)
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("recovery_question") from exc
+        return self._question_from_decision(
+            decision,
+            answered_ids,
+            answered_question_texts,
+        )
 
-    @staticmethod
-    def _question_from_decision(decision: dict, answered_ids: set[str]) -> Question | None:
+    @classmethod
+    def _question_from_decision(
+        cls,
+        decision: dict,
+        answered_ids: set[str],
+        answered_question_texts: set[str] | None = None,
+    ) -> Question | None:
         if not isinstance(decision, dict) or not bool(decision.get("need_question")):
             return None
         question_data = decision.get("question")
         if not isinstance(question_data, dict):
             return None
+
         question_id = str(question_data.get("id", "")).strip()
-        if not question_id or question_id in answered_ids:
+        title = str(question_data.get("title", "")).strip()
+        if not question_id or question_id in answered_ids or not title:
             return None
+
+        normalized_title = cls._normalize_question_text(title)
+        previous = answered_question_texts or set()
+        if normalized_title in previous:
+            return None
+        if any(cls._question_similarity(normalized_title, old) >= 0.82 for old in previous):
+            return None
+
         if not question_data.get("options") and not question_data.get("allow_text"):
             question_data["allow_text"] = True
         try:
@@ -174,14 +237,28 @@ class TafseerService:
         except ValidationError:
             return None
 
+    @staticmethod
+    def _normalize_question_text(text: str) -> str:
+        text = _ARABIC_DIACRITICS.sub("", text.strip().lower())
+        text = text.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"}))
+        return " ".join(_WORDS.findall(text))
+
+    @staticmethod
+    def _question_similarity(left: str, right: str) -> float:
+        left_tokens = set(_WORDS.findall(left))
+        right_tokens = set(_WORDS.findall(right))
+        if not left_tokens or not right_tokens:
+            return 0.0
+        return len(left_tokens & right_tokens) / max(1, min(len(left_tokens), len(right_tokens)))
+
     async def _extract_facts(self, base_context: str) -> dict:
         try:
             raw = await self.models.generate_json(
                 SYSTEM_PROMPT,
                 EXTRACT_PROMPT + "\n\n" + base_context,
             )
-        except (ProviderUnavailable, ValueError, KeyError, TypeError):
-            return {"facts": [], "unknowns": [], "explicit_real_life_context": []}
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("extract_facts") from exc
 
         facts: list[dict] = []
         seen_ids: set[str] = set()
@@ -213,6 +290,29 @@ class TafseerService:
             "unknowns": unknowns,
             "explicit_real_life_context": explicit_context,
         }
+
+    async def _build_draft(self, compact_context: str, valid_fact_ids: set[str]) -> dict:
+        try:
+            raw = await self.models.generate_json(
+                SYSTEM_PROMPT,
+                DRAFT_PROMPT + "\n\n" + compact_context,
+            )
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("draft") from exc
+        return self._sanitize_draft(raw, valid_fact_ids)
+
+    async def _build_critique(self, compact_context: str, draft: dict) -> dict:
+        try:
+            return await self.models.generate_json(
+                SYSTEM_PROMPT,
+                CRITIC_PROMPT
+                + "\n\n"
+                + compact_context
+                + "\n\nملخص المرشحات المطلوب نقده:\n"
+                + json.dumps(draft, ensure_ascii=False, separators=(",", ":")),
+            )
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("critique") from exc
 
     @staticmethod
     def _sanitize_draft(draft: dict, valid_fact_ids: set[str]) -> dict:
@@ -266,21 +366,14 @@ class TafseerService:
 
     async def _build_verified_result(
         self,
-        dream: str,
         final_context: str,
         compact_context: str,
         valid_fact_ids: set[str],
         answered_ids: set[str],
+        answered_question_texts: set[str],
         can_ask: bool,
     ) -> FinalResult | Question:
-        try:
-            raw = await self.models.generate_json(
-                SYSTEM_PROMPT,
-                FINAL_PROMPT + "\n\n" + final_context,
-            )
-        except (ProviderUnavailable, ValueError, KeyError, TypeError):
-            # Technical/provider failure: asking the user more context would not fix it.
-            return self._safe_fallback(dream)
+        raw = await self._generate_final(final_context)
 
         if not self._python_grounding_ok(raw, valid_fact_ids):
             raw = await self._retry_after_rejection(
@@ -289,55 +382,103 @@ class TafseerService:
                 ["هناك ادعاء رئيسي بلا fact_ids صحيحة من خريطة الحقائق."],
             )
             if not self._python_grounding_ok(raw, valid_fact_ids):
-                return self._insufficient_evidence_result()
-
-        verification = await self._verify_result(final_context, raw)
-        if not verification.get("pass", False):
-            missing_context = verification.get("missing_context", [])
-            if can_ask and isinstance(missing_context, list) and any(
-                isinstance(x, str) and x.strip() for x in missing_context
-            ):
-                question = await self._recovery_context_question(
-                    compact_context,
-                    {
-                        "stage": "final_verifier",
-                        "missing_context": missing_context,
-                        "unsupported_claims": verification.get("unsupported_claims", []),
-                        "reason": verification.get("reason", ""),
-                    },
-                    answered_ids,
-                )
-                if question is not None:
-                    return question
-
-            unsupported = verification.get("unsupported_claims", [])
-            raw = await self._retry_after_rejection(final_context, raw, unsupported)
-            if not self._python_grounding_ok(raw, valid_fact_ids):
-                return self._insufficient_evidence_result()
-            verification = await self._verify_result(final_context, raw)
-            if not verification.get("pass", False):
-                missing_context = verification.get("missing_context", [])
-                if can_ask and isinstance(missing_context, list) and any(
-                    isinstance(x, str) and x.strip() for x in missing_context
-                ):
+                if can_ask:
                     question = await self._recovery_context_question(
                         compact_context,
                         {
-                            "stage": "final_verifier_retry",
-                            "missing_context": missing_context,
-                            "unsupported_claims": verification.get("unsupported_claims", []),
-                            "reason": verification.get("reason", ""),
+                            "stage": "grounding",
+                            "missing_context": ["المعنى المقترح لا يمكن ربطه بما ورد صراحة"],
                         },
                         answered_ids,
+                        answered_question_texts,
                     )
                     if question is not None:
                         return question
                 return self._insufficient_evidence_result()
 
+        verification = await self._verify_result(final_context, raw)
+        if not verification.get("pass", False):
+            question = await self._question_from_verification(
+                compact_context,
+                verification,
+                answered_ids,
+                answered_question_texts,
+                can_ask,
+                stage="final_verifier",
+            )
+            if question is not None:
+                return question
+
+            raw = await self._retry_after_rejection(
+                final_context,
+                raw,
+                verification.get("unsupported_claims", []),
+            )
+            if not self._python_grounding_ok(raw, valid_fact_ids):
+                return self._insufficient_evidence_result()
+
+            verification = await self._verify_result(final_context, raw)
+            if not verification.get("pass", False):
+                question = await self._question_from_verification(
+                    compact_context,
+                    verification,
+                    answered_ids,
+                    answered_question_texts,
+                    can_ask,
+                    stage="final_verifier_retry",
+                )
+                if question is not None:
+                    return question
+                return self._insufficient_evidence_result()
+
         try:
             return FinalResult.model_validate(raw)
         except ValidationError:
-            return self._insufficient_evidence_result()
+            repaired = await self._retry_after_rejection(
+                final_context,
+                raw,
+                ["صيغة النتيجة النهائية غير مكتملة أو غير صالحة."],
+            )
+            try:
+                return FinalResult.model_validate(repaired)
+            except ValidationError as exc:
+                raise AnalysisTechnicalFailure("final_schema") from exc
+
+    async def _generate_final(self, final_context: str) -> dict:
+        try:
+            return await self.models.generate_json(
+                SYSTEM_PROMPT,
+                FINAL_PROMPT + "\n\n" + final_context,
+            )
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("final_generation") from exc
+
+    async def _question_from_verification(
+        self,
+        compact_context: str,
+        verification: dict,
+        answered_ids: set[str],
+        answered_question_texts: set[str],
+        can_ask: bool,
+        stage: str,
+    ) -> Question | None:
+        if not can_ask:
+            return None
+        missing = verification.get("missing_context", [])
+        unsupported = verification.get("unsupported_claims", [])
+        if not missing and not unsupported:
+            return None
+        return await self._recovery_context_question(
+            compact_context,
+            {
+                "stage": stage,
+                "missing_context": missing,
+                "unsupported_claims": unsupported,
+                "reason": verification.get("reason", ""),
+            },
+            answered_ids,
+            answered_question_texts,
+        )
 
     async def _verify_result(self, final_context: str, raw: dict) -> dict:
         try:
@@ -349,13 +490,8 @@ class TafseerService:
                 + "\n\nالنتيجة المقترحة للتدقيق:\n"
                 + json.dumps(raw, ensure_ascii=False, separators=(",", ":")),
             )
-        except (ProviderUnavailable, ValueError, KeyError, TypeError):
-            return {
-                "pass": False,
-                "unsupported_claims": ["تعذر إجراء التدقيق النهائي."],
-                "missing_context": [],
-                "reason": "technical_verification_failure",
-            }
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("final_verification") from exc
 
     async def _retry_after_rejection(
         self,
@@ -365,7 +501,7 @@ class TafseerService:
     ) -> dict:
         rejection_context = (
             final_context
-            + "\n\nالنتيجة السابقة رُفضت لأنها احتوت على ادعاءات غير مسندة:\n"
+            + "\n\nالنتيجة السابقة رُفضت لأنها احتوت على ادعاءات غير مسندة أو صيغة غير صالحة:\n"
             + json.dumps(unsupported_claims, ensure_ascii=False, separators=(",", ":"))
             + "\n\nالنتيجة السابقة:\n"
             + json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
@@ -376,8 +512,8 @@ class TafseerService:
                 SYSTEM_PROMPT,
                 FINAL_PROMPT + "\n\n" + rejection_context,
             )
-        except (ProviderUnavailable, ValueError, KeyError, TypeError):
-            return {}
+        except Exception as exc:
+            raise AnalysisTechnicalFailure("final_retry") from exc
 
     @staticmethod
     def _python_grounding_ok(raw: dict, valid_fact_ids: set[str]) -> bool:
@@ -409,7 +545,8 @@ class TafseerService:
         fact_text = json.dumps(fact_map or {}, ensure_ascii=False, separators=(",", ":"))
         return (
             "نص المنام كما كتبه المستخدم:\n" + dream
-            + "\n\nإجابات التوضيح السابقة (لا تكرر معناها):\n" + answers_text
+            + "\n\nإجابات التوضيح السابقة، وكل عنصر يتضمن السؤال وإجابته (لا تكرر معناها):\n"
+            + answers_text
             + "\n\nخريطة الحقائق الصريحة المستخرجة:\n" + fact_text
             + "\n\nالمعرفة المسترجعة الموثقة فقط:\n" + knowledge_text
             + "\n\nمهم: غياب مصدر موثق يعني عدم نسبة قول إلى كتاب أو عالم. "
@@ -420,31 +557,15 @@ class TafseerService:
     def _insufficient_evidence_result() -> FinalResult:
         return FinalResult(
             interpretation=(
-                "لا تكفي القرائن الحالية لترجيح تفسير محدد دون إضافة افتراضات من خارج المنام. "
-                "بعد طلب التوضيحات المفيدة المتاحة، الأفضل التوقف هنا بدل بناء معنى مقنع شكليًا لا يسنده النص."
+                "بعد التوضيحات المتاحة لا تكفي القرائن لترجيح تفسير محدد دون إضافة افتراضات من خارج المنام. "
+                "الأفضل التوقف هنا بدل بناء معنى مقنع شكليًا لا يسنده النص."
             ),
             nature="uncertain",
             nature_label="الترجيح غير كافٍ",
             evidence=[],
             alternatives=[],
             why_this_interpretation=(
-                "رفض المدقق الداخلي النتيجة لأنها احتاجت استنتاجات لا يمكن ربطها مباشرة بما ورد في المنام أو إجاباتك."
+                "رفض المدقق الداخلي الترجيح لأن المعنى احتاج استنتاجات لا يمكن ربطها مباشرة بما ورد في المنام أو إجاباتك."
             ),
             caution="هذا تأويل اجتهادي وليس حكمًا يقينيًا، والله أعلم.",
-        )
-
-    @staticmethod
-    def _safe_fallback(dream: str) -> FinalResult:
-        length_label = "مترابط نسبيًا" if len(dream) >= 120 else "مختصر ويحتمل أكثر من وجه"
-        return FinalResult(
-            interpretation=(
-                "تعذر إكمال مسار التأويل الموثق بسبب تعثر تقني في هذه المحاولة، لذلك لن أختلق تفسيرًا من رموز منفصلة. "
-                "إضافة معلومات عن الرؤيا لن تصلح هذا النوع من الخطأ؛ يمكن إعادة المحاولة لاحقًا."
-            ),
-            nature="uncertain",
-            nature_label=length_label,
-            evidence=[],
-            alternatives=[],
-            why_this_interpretation="تم اختيار الامتناع عن التخمين لأن مسار التحقق التقني لم يكتمل.",
-            caution="لا توجد نتيجة تفسيرية موثوقة في هذه المحاولة. والله أعلم.",
         )
