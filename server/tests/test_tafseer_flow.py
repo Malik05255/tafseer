@@ -33,6 +33,42 @@ class TafseerFlowTests(unittest.TestCase):
         question = TafseerService._question_from_decision(decision, {"person_alive"})
         self.assertIsNone(question)
 
+    def test_semantically_repeated_question_is_rejected(self):
+        old = TafseerService._normalize_question_text("هل الشخص حي أم متوفى؟")
+        decision = {
+            "need_question": True,
+            "question": {
+                "id": "person_status_again",
+                "title": "هل الشخص الذي رأيته حي أم متوفى؟",
+                "explanation": "قد يغيّر ذلك فهم المشهد.",
+                "options": [],
+                "allow_text": True,
+                "text_hint": "اكتب الإجابة",
+            },
+        }
+        question = TafseerService._question_from_decision(
+            decision,
+            set(),
+            {old},
+        )
+        self.assertIsNone(question)
+
+    def test_new_context_question_is_accepted(self):
+        old = TafseerService._normalize_question_text("هل الشخص حي أم متوفى؟")
+        decision = {
+            "need_question": True,
+            "question": {
+                "id": "emotion_scene",
+                "title": "ما شعورك أثناء المشهد؟",
+                "explanation": "الشعور قد يغيّر معنى الحدث.",
+                "options": [],
+                "allow_text": True,
+                "text_hint": "اكتب شعورك",
+            },
+        }
+        question = TafseerService._question_from_decision(decision, set(), {old})
+        self.assertIsNotNone(question)
+
     def test_missing_context_triggers_recovery(self):
         critique = {
             "preferred": "لا يوجد ترجيح كافٍ",
