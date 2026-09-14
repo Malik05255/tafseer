@@ -103,6 +103,57 @@ class TafseerFlowTests(unittest.TestCase):
         question = TafseerService._question_from_decision(decision, set(), dream=dream)
         self.assertIsNone(question)
 
+    def test_complex_narrative_requires_two_context_questions(self):
+        dream = (
+            "كان الشباب فريق السحاب بيسوون لي حفل اعتزال وفيه عشاء وناس جابوا ذبايح، "
+            "ومن ضمنهم المرحوم جدي حسن معه كبش لكنه متردد يعطينا بسبب الملعب، ثم وافق."
+        )
+        self.assertEqual(TafseerService._recommended_min_questions(dream), 2)
+
+    def test_short_simple_dream_does_not_force_two_questions(self):
+        dream = "رأيت بابًا مفتوحًا وشعرت بالراحة."
+        self.assertLess(TafseerService._recommended_min_questions(dream), 2)
+
+    def test_daily_thoughts_requires_real_life_context(self):
+        result = {
+            "nature": "daily_thoughts",
+            "nature_label": "أقرب إلى حديث النفس",
+            "interpretation": "يعكس المنام انشغالًا واقعيًا.",
+            "why_this_interpretation": "لارتباطه بالواقع.",
+        }
+        dream = "رأيت فريقًا يقيم لي حفلًا ثم حضر شخص من العائلة ووافق على إعطائنا شيئًا."
+        self.assertTrue(TafseerService._result_needs_more_context(result, [], dream))
+
+    def test_real_life_answer_allows_daily_thoughts_classification(self):
+        result = {
+            "nature": "daily_thoughts",
+            "nature_label": "أقرب إلى حديث النفس",
+            "interpretation": "يعكس المنام انشغالًا واقعيًا.",
+            "why_this_interpretation": "لارتباطه بحدث يشغل الرائي.",
+        }
+        dream = "رأيت فريقًا يقيم لي حفلًا قصيرًا."
+        answers = [
+            {
+                "question_id": "reality_context",
+                "question_text": "هل الحدث الرئيسي في المنام مرتبط بواقعك الحالي أو يشغل تفكيرك هذه الفترة؟",
+                "value": "نعم، يشغلني حاليًا",
+            }
+        ]
+        self.assertFalse(TafseerService._result_needs_more_context(result, answers, dream))
+
+    def test_mixed_cannot_be_used_as_early_fallback(self):
+        result = {
+            "nature": "mixed",
+            "nature_label": "منام مختلط",
+            "interpretation": "قد يجمع أكثر من معنى.",
+            "why_this_interpretation": "السياق غير كافٍ.",
+        }
+        dream = (
+            "رأيت حفلًا كبيرًا مع فريق وأحد أقاربي المتوفين، وكان هناك تردد ثم موافقة "
+            "على إعطاء شيء في نهاية المنام."
+        )
+        self.assertTrue(TafseerService._result_needs_more_context(result, [], dream))
+
     def test_missing_context_triggers_recovery(self):
         critique = {
             "preferred": "لا يوجد ترجيح كافٍ",
