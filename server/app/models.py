@@ -43,7 +43,9 @@ class FinalResult(BaseModel):
 
 
 class InterpretResponse(BaseModel):
-    status: Literal["question", "complete"]
+    status: Literal["question", "complete", "error"]
     progress_checkpoint: int
     question: Question | None = None
     result: FinalResult | None = None
+    error_code: str | None = None
+    message: str | None = None
