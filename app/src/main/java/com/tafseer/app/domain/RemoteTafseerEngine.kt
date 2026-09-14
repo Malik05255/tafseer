@@ -11,6 +11,8 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
+class AiProviderUnavailableException(message: String) : IOException(message)
+
 class RemoteTafseerEngine(
     private val baseUrl: String
 ) : TafseerEngine {
@@ -20,6 +22,8 @@ class RemoteTafseerEngine(
         onProgress: suspend (progress: Int, stage: AnalysisStage) -> Unit,
         ask: suspend (ClarifyingQuestion) -> QuestionAnswer
     ): InterpretationResult = coroutineScope {
+        ensureProviderReady()
+
         val answers = mutableListOf<QuestionAnswer>()
         var progress = 0
 
@@ -66,6 +70,27 @@ class RemoteTafseerEngine(
         error("Unreachable")
     }
 
+    private suspend fun ensureProviderReady() = withContext(Dispatchers.IO) {
+        val endpoint = baseUrl.trimEnd('/') + "/health"
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 12_000
+            readTimeout = 20_000
+            setRequestProperty("Accept", "application/json")
+        }
+        val code = connection.responseCode
+        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+        val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        connection.disconnect()
+        if (code !in 200..299) throw IOException("Tafseer health HTTP $code")
+        if (text.isBlank()) throw IOException("Tafseer health returned an empty response")
+
+        val json = JSONObject(text)
+        if (!json.optBoolean("ai_ready", false)) {
+            throw AiProviderUnavailableException("AI provider is not configured")
+        }
+    }
+
     private suspend fun postStep(dream: String, answers: List<QuestionAnswer>): JSONObject = withContext(Dispatchers.IO) {
         val endpoint = baseUrl.trimEnd('/') + "/v1/interpret"
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
@@ -94,6 +119,10 @@ class RemoteTafseerEngine(
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
         val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
         connection.disconnect()
+
+        if (code == 503 && text.contains("ai_provider_not_configured")) {
+            throw AiProviderUnavailableException("AI provider is not configured")
+        }
         if (code !in 200..299) throw IOException("Tafseer API HTTP $code: ${text.take(180)}")
         if (text.isBlank()) throw IOException("Tafseer API returned an empty response")
         JSONObject(text)
@@ -157,20 +186,5 @@ class RemoteTafseerEngine(
         in 79..86 -> AnalysisStage.CLASSIFYING
         in 87..95 -> AnalysisStage.WRITING
         else -> AnalysisStage.VERIFYING
-    }
-}
-
-class ResilientTafseerEngine(
-    private val remote: TafseerEngine,
-    private val fallback: TafseerEngine = LocalTafseerEngine()
-) : TafseerEngine {
-    override suspend fun interpret(
-        dream: String,
-        onProgress: suspend (Int, AnalysisStage) -> Unit,
-        ask: suspend (ClarifyingQuestion) -> QuestionAnswer
-    ): InterpretationResult = try {
-        remote.interpret(dream, onProgress, ask)
-    } catch (_: Exception) {
-        fallback.interpret(dream, onProgress, ask)
     }
 }
