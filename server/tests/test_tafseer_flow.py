@@ -69,6 +69,40 @@ class TafseerFlowTests(unittest.TestCase):
         question = TafseerService._question_from_decision(decision, set(), {old})
         self.assertIsNotNone(question)
 
+    def test_bundled_question_is_rejected(self):
+        decision = {
+            "need_question": True,
+            "question": {
+                "id": "two_axes",
+                "title": "هل الجد حي أم متوفى؟ وهل حفل الاعتزال مرتبط بواقعك؟",
+                "explanation": "السياق مهم.",
+                "options": [],
+                "allow_text": True,
+                "text_hint": "اكتب الإجابة",
+            },
+        }
+        question = TafseerService._question_from_decision(decision, set())
+        self.assertIsNone(question)
+
+    def test_explicit_deceased_fact_prevents_status_question(self):
+        decision = {
+            "need_question": True,
+            "question": {
+                "id": "grandfather_status",
+                "title": "هل الجد حسن حي أم متوفى؟",
+                "explanation": "حالة الشخص قد تؤثر.",
+                "options": [
+                    {"id": "alive", "label": "حي"},
+                    {"id": "dead", "label": "متوفى"},
+                ],
+                "allow_text": False,
+                "text_hint": "",
+            },
+        }
+        dream = "رأيت في المنام المرحوم جدي حسن حاضرًا في الحفل."
+        question = TafseerService._question_from_decision(decision, set(), dream=dream)
+        self.assertIsNone(question)
+
     def test_missing_context_triggers_recovery(self):
         critique = {
             "preferred": "لا يوجد ترجيح كافٍ",
