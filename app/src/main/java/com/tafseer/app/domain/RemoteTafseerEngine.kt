@@ -108,6 +108,7 @@ class RemoteTafseerEngine(
                 answers.forEach { answer ->
                     put(JSONObject().apply {
                         put("question_id", answer.questionId)
+                        put("question_text", answer.questionText)
                         put("value", answer.value)
                     })
                 }
