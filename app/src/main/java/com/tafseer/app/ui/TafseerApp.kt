@@ -383,6 +383,7 @@ private fun ResultScreen(
     onEdit: () -> Unit,
     onNew: () -> Unit
 ) {
+    var sourcesExpanded by remember { mutableStateOf(true) }
     var whyExpanded by remember { mutableStateOf(false) }
     var evidenceExpanded by remember { mutableStateOf(false) }
     var alternativesExpanded by remember { mutableStateOf(false) }
@@ -440,6 +441,53 @@ private fun ResultScreen(
                 modifier = Modifier.padding(20.dp),
                 style = MaterialTheme.typography.bodyLarge
             )
+        }
+
+        if (result.references.isNotEmpty()) {
+            DisclosureCard(
+                title = "الاستدلال",
+                expanded = sourcesExpanded,
+                onToggle = { sourcesExpanded = !sourcesExpanded }
+            ) {
+                result.references.forEachIndexed { index, source ->
+                    Column(modifier = Modifier.padding(vertical = 9.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = source.claim,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(50.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = relationLabel(source.relation),
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = source.explanation,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
+                        )
+                        if (source.relation != "contextual") {
+                            Spacer(Modifier.height(5.dp))
+                            Text(
+                                text = "${source.sourceTitle} — ${source.sourceRef}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    if (index != result.references.lastIndex) HorizontalDivider()
+                }
+            }
         }
 
         if (result.evidence.isNotEmpty()) {
@@ -522,6 +570,12 @@ private fun ResultScreen(
 
         Spacer(Modifier.height(20.dp))
     }
+}
+
+private fun relationLabel(relation: String): String = when (relation) {
+    "direct" -> "نص مباشر"
+    "semantic" -> "استئناس بالمعنى"
+    else -> "قرينة سياقية"
 }
 
 @Composable
