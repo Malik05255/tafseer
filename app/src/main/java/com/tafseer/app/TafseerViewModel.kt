@@ -6,6 +6,8 @@ import com.tafseer.app.domain.AnalysisStage
 import com.tafseer.app.domain.ClarifyingQuestion
 import com.tafseer.app.domain.LocalTafseerEngine
 import com.tafseer.app.domain.QuestionAnswer
+import com.tafseer.app.domain.RemoteTafseerEngine
+import com.tafseer.app.domain.ResilientTafseerEngine
 import com.tafseer.app.domain.TafseerEngine
 import com.tafseer.app.domain.TafseerUiState
 import kotlinx.coroutines.CompletableDeferred
@@ -15,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class TafseerViewModel(
-    private val engine: TafseerEngine = LocalTafseerEngine()
+    private val engine: TafseerEngine = defaultEngine()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<TafseerUiState>(TafseerUiState.Writing())
@@ -91,5 +93,16 @@ class TafseerViewModel(
     fun editCurrentDream() {
         val current = _uiState.value as? TafseerUiState.Result ?: return
         _uiState.value = TafseerUiState.Writing(current.dream)
+    }
+
+    companion object {
+        private fun defaultEngine(): TafseerEngine {
+            val url = BuildConfig.TAFSEER_API_BASE_URL.trim()
+            return if (url.isNotBlank()) {
+                ResilientTafseerEngine(RemoteTafseerEngine(url))
+            } else {
+                LocalTafseerEngine()
+            }
+        }
     }
 }
