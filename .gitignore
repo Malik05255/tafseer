@@ -1,0 +1,25 @@
+# Android
+.gradle/
+local.properties
+**/build/
+*.apk
+*.aab
+
+# IDE
+.idea/
+*.iml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+server/.env
+
+# Knowledge database (generated/imported locally)
+server/knowledge/*.db
+server/knowledge/*.db-*
+
+# Secrets
+.env
+*.keystore
+*.jks
