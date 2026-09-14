@@ -31,19 +31,28 @@ data class QuestionAnswer(
 )
 
 enum class DreamNature(val label: String) {
-    COHERENT("منام مترابط نسبيًا"),
-    MIXED("منام مختلط يحتمل أكثر من وجه"),
-    DAILY_THOUGHTS("قد يغلب عليه حديث النفس"),
+    COHERENT("رؤيا مترابطة"),
+    MIXED("منام مختلط"),
+    DAILY_THOUGHTS("أقرب إلى حديث النفس"),
     FRAGMENTED("منام شديد التشتت"),
-    UNCERTAIN("النوع غير محسوم")
+    UNCERTAIN("منام مختلط")
 }
 
 data class EvidencePoint(val title: String, val explanation: String)
+
+data class SourceReference(
+    val claim: String,
+    val sourceTitle: String,
+    val sourceRef: String,
+    val relation: String,
+    val explanation: String
+)
 
 data class InterpretationResult(
     val interpretation: String,
     val nature: DreamNature,
     val evidence: List<EvidencePoint>,
+    val references: List<SourceReference> = emptyList(),
     val alternatives: List<String>,
     val whyThisInterpretation: String,
     val caution: String = "هذا تأويل اجتهادي وليس حكمًا يقينيًا، والله أعلم."
