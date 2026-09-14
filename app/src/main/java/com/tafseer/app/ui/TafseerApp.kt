@@ -415,7 +415,7 @@ private fun ResultScreen(
 ) {
     var sourcesExpanded by remember { mutableStateOf(true) }
     var whyExpanded by remember { mutableStateOf(false) }
-    var evidenceExpanded by remember { mutableStateOf(false) }
+    var evidenceExpanded by remember { mutableStateOf(true) }
     var alternativesExpanded by remember { mutableStateOf(false) }
 
     Column(
@@ -518,7 +518,7 @@ private fun ResultScreen(
 
         if (result.evidence.isNotEmpty()) {
             DisclosureCard(
-                title = "القرائن",
+                title = "كيف وصلنا لهذا التأويل؟",
                 expanded = evidenceExpanded,
                 onToggle = { evidenceExpanded = !evidenceExpanded }
             ) {
