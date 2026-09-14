@@ -30,7 +30,8 @@ enum class DreamNature(val label: String) {
     COHERENT("رؤيا مترابطة قابلة للتأويل"),
     MIXED("منام مختلط يحتمل أكثر من وجه"),
     DAILY_THOUGHTS("يغلب عليه حديث النفس"),
-    FRAGMENTED("منام شديد التشتت ولا يظهر له تأويل واضح")
+    FRAGMENTED("منام شديد التشتت ولا يظهر له تأويل واضح"),
+    UNCERTAIN("غير محسوم")
 }
 
 data class EvidencePoint(val title: String, val explanation: String)
