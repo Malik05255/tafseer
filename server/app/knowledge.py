@@ -48,18 +48,59 @@ class KnowledgeStore:
     def __init__(self, path: str | None = None) -> None:
         self.path = Path(path or settings.knowledge_db_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.seed_path = Path(__file__).resolve().parent.parent / "knowledge" / "core_verified.jsonl"
         with self._connect() as con:
             con.executescript(SCHEMA)
+            source_count = con.execute("SELECT COUNT(*) FROM knowledge_items").fetchone()[0]
+            case_count = con.execute("SELECT COUNT(*) FROM interpreted_cases").fetchone()[0]
+            if source_count + case_count == 0:
+                self._seed_verified_core(con)
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(self.path)
         con.row_factory = sqlite3.Row
         return con
 
+    def _seed_verified_core(self, con: sqlite3.Connection) -> None:
+        if not self.seed_path.exists():
+            return
+        with self.seed_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                item = json.loads(line)
+                if item.get("verified") is not True:
+                    continue
+                if item.get("kind") == "source":
+                    con.execute(
+                        """
+                        INSERT INTO knowledge_items(source_title, source_ref, source_type, text, notes, verified)
+                        VALUES (?, ?, ?, ?, ?, 1)
+                        """,
+                        (
+                            item["source_title"], item["source_ref"],
+                            item.get("source_type", "reference"), item["text"], item.get("notes", "")
+                        ),
+                    )
+                elif item.get("kind") == "case":
+                    con.execute(
+                        """
+                        INSERT INTO interpreted_cases(dream_summary, context_json, interpretation,
+                                                      reasoning_summary, source_ref, verified)
+                        VALUES (?, ?, ?, ?, ?, 1)
+                        """,
+                        (
+                            item["dream_summary"],
+                            json.dumps(item.get("context", {}), ensure_ascii=False),
+                            item["interpretation"], item["reasoning_summary"], item["source_ref"]
+                        ),
+                    )
+            con.commit()
+
     @staticmethod
     def _query(text: str) -> str:
         words = re.findall(r"[\w\u0600-\u06FF]{2,}", text.lower())
-        # FTS OR improves recall; downstream model must reason over context rather than count matches.
         return " OR ".join(f'"{word}"' for word in dict.fromkeys(words[:24]))
 
     def retrieve(self, dream: str, limit: int = 8) -> list[dict]:
