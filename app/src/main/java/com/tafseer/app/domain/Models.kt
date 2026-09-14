@@ -1,11 +1,11 @@
 package com.tafseer.app.domain
 
 enum class AnalysisStage(val title: String, val detail: String) {
-    READING("قراءة الرؤيا", "ترتيب الأحداث وفهم النص كما رويته"),
+    READING("قراءة المنام", "ترتيب الأحداث وفهم النص كما رويته"),
     EXTRACTING("فهم العناصر", "استخراج الأشخاص والأماكن والمشاعر والرموز"),
     CONTEXT("فهم السياق", "تمييز التفاصيل المؤثرة من التفاصيل العابرة"),
     CLARIFYING("التحقق", "تحديد ما إذا كانت هناك معلومة ناقصة تغيّر المعنى"),
-    RETRIEVING("البحث", "مقارنة الرؤيا بالمعرفة والحالات ذات البنية المشابهة"),
+    RETRIEVING("البحث", "مقارنة المنام بالمعرفة والحالات ذات البنية المشابهة"),
     HYPOTHESES("الموازنة", "بناء أكثر من احتمال وعدم التعلق بأول تفسير"),
     CRITIQUE("المراجعة", "محاولة نقض الاحتمالات الضعيفة وكشف التناقض"),
     CLASSIFYING("طبيعة المنام", "تقدير مدى الترابط وحديث النفس والاضطراب"),
@@ -27,11 +27,11 @@ data class ClarifyingQuestion(
 data class QuestionAnswer(val questionId: String, val value: String)
 
 enum class DreamNature(val label: String) {
-    COHERENT("رؤيا مترابطة قابلة للتأويل"),
+    COHERENT("منام مترابط نسبيًا"),
     MIXED("منام مختلط يحتمل أكثر من وجه"),
-    DAILY_THOUGHTS("يغلب عليه حديث النفس"),
+    DAILY_THOUGHTS("قد يغلب عليه حديث النفس"),
     FRAGMENTED("منام شديد التشتت ولا يظهر له تأويل واضح"),
-    UNCERTAIN("غير محسوم")
+    UNCERTAIN("النوع غير محسوم")
 }
 
 data class EvidencePoint(val title: String, val explanation: String)
