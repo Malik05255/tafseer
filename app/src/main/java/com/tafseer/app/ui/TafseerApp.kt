@@ -53,8 +53,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,11 +70,10 @@ import com.tafseer.app.domain.TafseerUiState
 fun TafseerApp(viewModel: TafseerViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        // Do not animate on the full state object: Writing changes on every keystroke.
-        // Replacing the composable for every character destroys text-field focus and makes typing fail.
+        // Render the current screen directly. The text editor keeps its own IME state.
         when (val screenState = state) {
             is TafseerUiState.Writing -> WritingScreen(
-                dream = screenState.dream,
+                initialDream = screenState.dream,
                 onDreamChange = viewModel::updateDream,
                 onInterpret = viewModel::startInterpretation
             )
@@ -111,8 +112,20 @@ private fun BrandHeader(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun WritingScreen(dream: String, onDreamChange: (String) -> Unit, onInterpret: () -> Unit) {
+private fun WritingScreen(initialDream: String, onDreamChange: (String) -> Unit, onInterpret: () -> Unit) {
+    // Keep the full TextFieldValue locally so Arabic IMEs can preserve composition/cursor state.
+    // Mirroring a plain String from StateFlow on every key event can cancel IME composition on some devices.
+    var editorValue by remember {
+        mutableStateOf(
+            TextFieldValue(
+                text = initialDream,
+                selection = TextRange(initialDream.length)
+            )
+        )
+    }
+    val dream = editorValue.text
     val canSubmit = dream.trim().length >= 8
+
     Column(
         modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(18.dp)
@@ -128,8 +141,11 @@ private fun WritingScreen(dream: String, onDreamChange: (String) -> Unit, onInte
             lineHeight = 23.sp
         )
         OutlinedTextField(
-            value = dream,
-            onValueChange = onDreamChange,
+            value = editorValue,
+            onValueChange = { updated ->
+                editorValue = updated
+                onDreamChange(updated.text)
+            },
             modifier = Modifier.fillMaxWidth().height(300.dp),
             enabled = true,
             readOnly = false,
@@ -232,7 +248,7 @@ private fun AnalysisScreen(state: TafseerUiState.Analyzing, onAnswer: (String) -
 
 @Composable
 private fun ClarifyingQuestionCard(question: ClarifyingQuestion, onAnswer: (String) -> Unit, modifier: Modifier = Modifier) {
-    var textAnswer by remember(question.id) { mutableStateOf("") }
+    var textAnswer by remember(question.id) { mutableStateOf(TextFieldValue()) }
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -267,8 +283,8 @@ private fun ClarifyingQuestionCard(question: ClarifyingQuestion, onAnswer: (Stri
                     minLines = 3
                 )
                 Button(
-                    onClick = { onAnswer(textAnswer) },
-                    enabled = textAnswer.isNotBlank(),
+                    onClick = { onAnswer(textAnswer.text) },
+                    enabled = textAnswer.text.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(15.dp)
                 ) { Text("متابعة التحليل") }
