@@ -3,8 +3,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:allowBackup="true"
-        android:icon="@drawable/ic_tafseer_mark"
-        android:roundIcon="@drawable/ic_tafseer_mark"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="تفسير HAI"
         android:theme="@style/Theme.Tafseer"
         android:usesCleartextTraffic="false"
