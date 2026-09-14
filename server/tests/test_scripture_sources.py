@@ -42,6 +42,7 @@ class ScriptureSourceTests(unittest.TestCase):
                 "source_type": "hadith_weak",
                 "grade_class": "weak",
                 "grade": "ضعيف",
+                "text": "نص ضعيف للاختبار",
             }
         ]
         raw_refs = [
@@ -63,6 +64,7 @@ class ScriptureSourceTests(unittest.TestCase):
                 "source_type": "quran",
                 "grade_class": "quran",
                 "grade": "قرآن",
+                "text": "ما يفتح الله للناس من رحمة فلا ممسك لها",
             }
         ]
         raw_refs = [
@@ -76,6 +78,7 @@ class ScriptureSourceTests(unittest.TestCase):
         ]
         refs = TafseerService._sanitize_references(raw_refs, knowledge)
         self.assertEqual(refs[0]["relation"], "semantic")
+        self.assertIn("ما يفتح الله", refs[0]["explanation"])
 
 
 if __name__ == "__main__":
