@@ -14,6 +14,11 @@ from .providers import ModelRouter, ProviderUnavailable
 logger = logging.getLogger("tafseer.compact_service")
 _ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
 _WORDS = re.compile(r"[\w\u0600-\u06FF]{2,}")
+_STATUS_QUESTION_WORDS = {
+    "هل", "الشخص", "الذي", "رايته", "رأيته", "حي", "حيا", "متوفي", "متوفى",
+    "ميت", "ام", "أم", "كان", "هو", "هي", "حاله", "حالة", "الان", "الآن",
+}
+_DECEASED_MARKERS = {"المرحوم", "مرحوم", "المتوفي", "متوفي", "المتوفى", "متوفى", "توفي", "ميت"}
 
 
 class AnalysisTechnicalFailure(RuntimeError):
@@ -60,6 +65,7 @@ class TafseerService:
                     {"need_question": True, "question": decision.get("question")},
                     answered_ids,
                     answered_question_texts,
+                    dream=dream,
                 )
                 if question is not None:
                     return InterpretResponse(
@@ -70,8 +76,9 @@ class TafseerService:
 
                 repair_prompt = (
                     prompt
-                    + "\n\nالسؤال الذي اقترحته مكرر أو غير صالح. لا تكرر أي سؤال سابق. "
-                    "إما اسأل سؤالًا مختلفًا مؤثرًا أو أخرج action=complete."
+                    + "\n\nالسؤال الذي اقترحته مكرر أو مركب أو يسأل عن معلومة مذكورة أصلًا. "
+                    "اسأل سؤالًا واحدًا ذريًا عن مجهول واحد فقط، ولا تسأل عما حُسم في نص المنام. "
+                    "إن لم يبق سؤال مؤثر صالح فأخرج action=complete."
                 )
                 decision = await self.models.generate_json(SYSTEM_PROMPT, repair_prompt)
                 if str(decision.get("action", "")).strip().lower() == "question":
@@ -79,6 +86,7 @@ class TafseerService:
                         {"need_question": True, "question": decision.get("question")},
                         answered_ids,
                         answered_question_texts,
+                        dream=dream,
                     )
                     if question is not None:
                         return InterpretResponse(
@@ -258,6 +266,7 @@ class TafseerService:
         decision: dict,
         answered_ids: set[str],
         answered_question_texts: set[str] | None = None,
+        dream: str = "",
     ) -> Question | None:
         if not isinstance(decision, dict) or not bool(decision.get("need_question")):
             return None
@@ -269,6 +278,10 @@ class TafseerService:
         question_id = str(question_data.get("id", "")).strip()
         title = str(question_data.get("title", "")).strip()
         if not question_id or question_id in answered_ids or not title:
+            return None
+        if len(title) > 140 or cls._is_bundled_question(title):
+            return None
+        if dream and cls._question_already_answered_in_dream(title, dream):
             return None
 
         normalized_title = cls._normalize_question_text(title)
@@ -282,12 +295,53 @@ class TafseerService:
         question_data.setdefault("options", [])
         question_data.setdefault("allow_text", False)
         question_data.setdefault("text_hint", "اكتب إجابتك هنا…")
+        options = question_data.get("options")
+        if isinstance(options, list) and len(options) > 5:
+            question_data["options"] = options[:5]
         if not question_data.get("options") and not question_data.get("allow_text"):
             question_data["allow_text"] = True
         try:
             return Question.model_validate(question_data)
         except ValidationError:
             return None
+
+    @staticmethod
+    def _is_bundled_question(title: str) -> bool:
+        if title.count("؟") + title.count("?") > 1:
+            return True
+        normalized = TafseerService._normalize_question_text(title)
+        if len(re.findall(r"(?:^|\s)و?هل(?:\s|$)", normalized)) > 1:
+            return True
+        if re.search(r"[؟?]\s*(?:و|ثم)?\s*هل\b", title):
+            return True
+        return False
+
+    @classmethod
+    def _question_already_answered_in_dream(cls, title: str, dream: str) -> bool:
+        title_norm = cls._normalize_question_text(title)
+        dream_norm = cls._normalize_question_text(dream)
+
+        asks_life_status = "حي" in title_norm and any(word in title_norm for word in ("متوفي", "ميت"))
+        if not asks_life_status:
+            return False
+
+        dream_tokens = _WORDS.findall(dream_norm)
+        title_tokens = set(_WORDS.findall(title_norm)) - {
+            cls._normalize_question_text(word) for word in _STATUS_QUESTION_WORDS
+        }
+        if not title_tokens:
+            return False
+
+        normalized_markers = {cls._normalize_question_text(marker) for marker in _DECEASED_MARKERS}
+        for index, token in enumerate(dream_tokens):
+            if token not in normalized_markers:
+                continue
+            start = max(0, index - 5)
+            end = min(len(dream_tokens), index + 7)
+            nearby = set(dream_tokens[start:end])
+            if title_tokens & nearby:
+                return True
+        return False
 
     @staticmethod
     def _normalize_question_text(text: str) -> str:
