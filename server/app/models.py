@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 class Answer(BaseModel):
     question_id: str
+    question_text: str = ""
     value: str
 
 
