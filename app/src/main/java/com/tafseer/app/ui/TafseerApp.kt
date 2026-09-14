@@ -1,6 +1,5 @@
 package com.tafseer.app.ui
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -69,23 +68,23 @@ import com.tafseer.app.domain.TafseerUiState
 fun TafseerApp(viewModel: TafseerViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        AnimatedContent(targetState = state, label = "tafseer_screen") { screenState ->
-            when (screenState) {
-                is TafseerUiState.Writing -> WritingScreen(
-                    dream = screenState.dream,
-                    onDreamChange = viewModel::updateDream,
-                    onInterpret = viewModel::startInterpretation
-                )
-                is TafseerUiState.Analyzing -> AnalysisScreen(
-                    state = screenState,
-                    onAnswer = viewModel::answerQuestion
-                )
-                is TafseerUiState.Result -> ResultScreen(
-                    result = screenState.result,
-                    onEdit = viewModel::editCurrentDream,
-                    onNew = viewModel::interpretAnother
-                )
-            }
+        // Do not animate on the full state object: Writing changes on every keystroke.
+        // Replacing the composable for every character destroys text-field focus and makes typing fail.
+        when (val screenState = state) {
+            is TafseerUiState.Writing -> WritingScreen(
+                dream = screenState.dream,
+                onDreamChange = viewModel::updateDream,
+                onInterpret = viewModel::startInterpretation
+            )
+            is TafseerUiState.Analyzing -> AnalysisScreen(
+                state = screenState,
+                onAnswer = viewModel::answerQuestion
+            )
+            is TafseerUiState.Result -> ResultScreen(
+                result = screenState.result,
+                onEdit = viewModel::editCurrentDream,
+                onNew = viewModel::interpretAnother
+            )
         }
     }
 }
@@ -132,6 +131,9 @@ private fun WritingScreen(dream: String, onDreamChange: (String) -> Unit, onInte
             value = dream,
             onValueChange = onDreamChange,
             modifier = Modifier.fillMaxWidth().height(300.dp),
+            enabled = true,
+            readOnly = false,
+            singleLine = false,
             placeholder = { Text("مثال: رأيت أنني في بيت قديم أعرفه، ثم دخل…", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)) },
             shape = RoundedCornerShape(24.dp),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -258,6 +260,8 @@ private fun ClarifyingQuestionCard(question: ClarifyingQuestion, onAnswer: (Stri
                     value = textAnswer,
                     onValueChange = { textAnswer = it },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = true,
+                    readOnly = false,
                     placeholder = { Text(question.textHint) },
                     shape = RoundedCornerShape(16.dp),
                     minLines = 3
