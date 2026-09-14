@@ -164,9 +164,28 @@ class RemoteTafseerEngine(
             }
         }
 
-        // Quran/Sunnah references stay in the backend for grounding and verification.
-        // They are intentionally discarded before rendering the user-facing result.
-        val references = emptyList<SourceReference>()
+        val referencesJson = json.optJSONArray("references") ?: JSONArray()
+        val references = buildList {
+            for (i in 0 until referencesJson.length()) {
+                val item = referencesJson.getJSONObject(i)
+                val claim = item.optString("claim").trim()
+                val sourceTitle = item.optString("source_title").trim()
+                val sourceRef = item.optString("source_ref").trim()
+                val relation = item.optString("relation", "semantic").trim()
+                val explanation = item.optString("explanation").trim()
+                if (claim.isNotBlank() && sourceTitle.isNotBlank() && sourceRef.isNotBlank() && explanation.isNotBlank()) {
+                    add(
+                        SourceReference(
+                            claim = claim,
+                            sourceTitle = sourceTitle,
+                            sourceRef = sourceRef,
+                            relation = relation,
+                            explanation = explanation
+                        )
+                    )
+                }
+            }
+        }
 
         val alternativesJson = json.optJSONArray("alternatives") ?: JSONArray()
         val alternatives = buildList {
