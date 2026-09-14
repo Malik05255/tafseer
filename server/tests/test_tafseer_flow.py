@@ -46,11 +46,7 @@ class TafseerFlowTests(unittest.TestCase):
                 "text_hint": "اكتب الإجابة",
             },
         }
-        question = TafseerService._question_from_decision(
-            decision,
-            set(),
-            {old},
-        )
+        question = TafseerService._question_from_decision(decision, set(), {old})
         self.assertIsNone(question)
 
     def test_new_context_question_is_accepted(self):
@@ -103,56 +99,96 @@ class TafseerFlowTests(unittest.TestCase):
         question = TafseerService._question_from_decision(decision, set(), dream=dream)
         self.assertIsNone(question)
 
-    def test_complex_narrative_requires_two_context_questions(self):
+    def test_complex_narrative_requires_reality_and_emotion_axes(self):
         dream = (
             "كان الشباب فريق السحاب بيسوون لي حفل اعتزال وفيه عشاء وناس جابوا ذبايح، "
             "ومن ضمنهم المرحوم جدي حسن معه كبش لكنه متردد يعطينا بسبب الملعب، ثم وافق."
         )
         self.assertEqual(TafseerService._recommended_min_questions(dream), 2)
+        self.assertEqual(TafseerService._mandatory_axes(dream), ["reality_link", "emotion"])
 
-    def test_short_simple_dream_does_not_force_two_questions(self):
+    def test_short_simple_dream_does_not_force_two_axes(self):
         dream = "رأيت بابًا مفتوحًا وشعرت بالراحة."
         self.assertLess(TafseerService._recommended_min_questions(dream), 2)
+        self.assertNotIn("emotion", TafseerService._mandatory_axes(dream))
 
-    def test_daily_thoughts_requires_real_life_context(self):
-        result = {
-            "nature": "daily_thoughts",
-            "nature_label": "أقرب إلى حديث النفس",
-            "interpretation": "يعكس المنام انشغالًا واقعيًا.",
-            "why_this_interpretation": "لارتباطه بالواقع.",
+    def test_interview_question_is_bound_to_single_axis(self):
+        interview = {
+            "ready": False,
+            "question": {
+                "axis": "reality_link",
+                "title": "هل حفل الاعتزال مرتبط بواقعك الحالي؟",
+                "explanation": "لفهم صلته بواقعك.",
+                "options": [],
+                "allow_text": True,
+                "text_hint": "وضح باختصار",
+            },
         }
-        dream = "رأيت فريقًا يقيم لي حفلًا ثم حضر شخص من العائلة ووافق على إعطائنا شيئًا."
-        self.assertTrue(TafseerService._result_needs_more_context(result, [], dream))
+        question = TafseerService._question_from_interview(
+            interview,
+            set(),
+            set(),
+            set(),
+            "رأيت حفل اعتزال.",
+            required_axis="reality_link",
+        )
+        self.assertIsNotNone(question)
+        self.assertEqual(question.id, "ctx_reality_link")
 
-    def test_real_life_answer_allows_daily_thoughts_classification(self):
-        result = {
-            "nature": "daily_thoughts",
-            "nature_label": "أقرب إلى حديث النفس",
-            "interpretation": "يعكس المنام انشغالًا واقعيًا.",
-            "why_this_interpretation": "لارتباطه بحدث يشغل الرائي.",
+    def test_interviewer_cannot_swap_required_axis(self):
+        interview = {
+            "ready": False,
+            "question": {
+                "axis": "emotion",
+                "title": "ما شعورك؟",
+                "explanation": "مهم.",
+                "options": [],
+                "allow_text": True,
+                "text_hint": "",
+            },
         }
-        dream = "رأيت فريقًا يقيم لي حفلًا قصيرًا."
+        question = TafseerService._question_from_interview(
+            interview,
+            set(),
+            set(),
+            set(),
+            "رأيت حفل اعتزال.",
+            required_axis="reality_link",
+        )
+        self.assertIsNone(question)
+
+    def test_answered_axes_are_tracked_from_question_ids(self):
         answers = [
             {
-                "question_id": "reality_context",
-                "question_text": "هل الحدث الرئيسي في المنام مرتبط بواقعك الحالي أو يشغل تفكيرك هذه الفترة؟",
-                "value": "نعم، يشغلني حاليًا",
+                "question_id": "ctx_reality_link",
+                "question_text": "هل له صلة بواقعك؟",
+                "value": "نعم",
+            },
+            {
+                "question_id": "ctx_emotion",
+                "question_text": "ما شعورك؟",
+                "value": "كنت مستغربًا",
+            },
+        ]
+        self.assertEqual(TafseerService._answered_axes(answers), {"reality_link", "emotion"})
+
+    def test_daily_thoughts_requires_positive_reality_support(self):
+        no_answers = [
+            {
+                "question_id": "ctx_reality_link",
+                "question_text": "هل المشهد مرتبط بواقعك؟",
+                "value": "لا، لا علاقة مباشرة ولا يشغلني",
             }
         ]
-        self.assertFalse(TafseerService._result_needs_more_context(result, answers, dream))
-
-    def test_mixed_cannot_be_used_as_early_fallback(self):
-        result = {
-            "nature": "mixed",
-            "nature_label": "منام مختلط",
-            "interpretation": "قد يجمع أكثر من معنى.",
-            "why_this_interpretation": "السياق غير كافٍ.",
-        }
-        dream = (
-            "رأيت حفلًا كبيرًا مع فريق وأحد أقاربي المتوفين، وكان هناك تردد ثم موافقة "
-            "على إعطاء شيء في نهاية المنام."
-        )
-        self.assertTrue(TafseerService._result_needs_more_context(result, [], dream))
+        yes_answers = [
+            {
+                "question_id": "ctx_reality_link",
+                "question_text": "هل المشهد مرتبط بواقعك؟",
+                "value": "نعم، هذا الموضوع يشغلني هذه الفترة",
+            }
+        ]
+        self.assertFalse(TafseerService._positive_reality_support(no_answers))
+        self.assertTrue(TafseerService._positive_reality_support(yes_answers))
 
     def test_missing_context_triggers_recovery(self):
         critique = {
@@ -174,19 +210,11 @@ class TafseerFlowTests(unittest.TestCase):
         self.assertTrue(TafseerService._critique_needs_context({}, draft))
 
     def test_grounding_rejects_unknown_fact_ids(self):
-        raw = {
-            "grounding": [
-                {"claim": "ادعاء", "fact_ids": ["F99"]},
-            ]
-        }
+        raw = {"grounding": [{"claim": "ادعاء", "fact_ids": ["F99"]}]}
         self.assertFalse(TafseerService._python_grounding_ok(raw, {"F1", "F2"}))
 
     def test_grounding_accepts_known_fact_ids(self):
-        raw = {
-            "grounding": [
-                {"claim": "ادعاء", "fact_ids": ["F1"]},
-            ]
-        }
+        raw = {"grounding": [{"claim": "ادعاء", "fact_ids": ["F1"]}]}
         self.assertTrue(TafseerService._python_grounding_ok(raw, {"F1", "F2"}))
 
 
