@@ -92,9 +92,10 @@ class RemoteTafseerEngine(
         connection.outputStream.bufferedWriter(Charsets.UTF_8).use { it.write(body) }
         val code = connection.responseCode
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val text = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
         connection.disconnect()
-        if (code !in 200..299) throw IOException("Tafseer API HTTP $code")
+        if (code !in 200..299) throw IOException("Tafseer API HTTP $code: ${text.take(180)}")
+        if (text.isBlank()) throw IOException("Tafseer API returned an empty response")
         JSONObject(text)
     }
 
@@ -132,6 +133,7 @@ class RemoteTafseerEngine(
             "coherent" -> DreamNature.COHERENT
             "daily_thoughts" -> DreamNature.DAILY_THOUGHTS
             "fragmented" -> DreamNature.FRAGMENTED
+            "uncertain" -> DreamNature.UNCERTAIN
             else -> DreamNature.MIXED
         }
         return InterpretationResult(
