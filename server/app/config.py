@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     openrouter_model: str = "openrouter/free"
     provider_mode: str = "free_first"
     knowledge_db_path: str = "knowledge/tafseer.db"
-    max_questions: int = 3
+    max_questions: int = 5
     model_config = SettingsConfigDict(env_file=".env", env_prefix="TAFSEER_", extra="ignore")
 
 
