@@ -163,6 +163,30 @@ class RemoteTafseerEngine(
                 add(EvidencePoint(item.getString("title"), item.getString("explanation")))
             }
         }
+
+        val referencesJson = json.optJSONArray("references") ?: JSONArray()
+        val references = buildList {
+            for (i in 0 until referencesJson.length()) {
+                val item = referencesJson.getJSONObject(i)
+                val claim = item.optString("claim").trim()
+                val sourceTitle = item.optString("source_title").trim()
+                val sourceRef = item.optString("source_ref").trim()
+                val relation = item.optString("relation", "contextual").trim()
+                val explanation = item.optString("explanation").trim()
+                if (claim.isNotBlank() && explanation.isNotBlank()) {
+                    add(
+                        SourceReference(
+                            claim = claim,
+                            sourceTitle = sourceTitle.ifBlank { "سياق الرؤيا" },
+                            sourceRef = sourceRef.ifBlank { "سياق الرؤيا" },
+                            relation = relation,
+                            explanation = explanation
+                        )
+                    )
+                }
+            }
+        }
+
         val alternativesJson = json.optJSONArray("alternatives") ?: JSONArray()
         val alternatives = buildList {
             for (i in 0 until alternativesJson.length()) add(alternativesJson.getString(i))
@@ -171,13 +195,14 @@ class RemoteTafseerEngine(
             "coherent" -> DreamNature.COHERENT
             "daily_thoughts" -> DreamNature.DAILY_THOUGHTS
             "fragmented" -> DreamNature.FRAGMENTED
-            "uncertain" -> DreamNature.UNCERTAIN
+            "uncertain" -> DreamNature.MIXED
             else -> DreamNature.MIXED
         }
         return InterpretationResult(
             interpretation = json.getString("interpretation"),
             nature = nature,
             evidence = evidence,
+            references = references,
             alternatives = alternatives,
             whyThisInterpretation = json.optString("why_this_interpretation"),
             caution = json.optString("caution", "هذا تأويل اجتهادي وليس حكمًا يقينيًا، والله أعلم.")
