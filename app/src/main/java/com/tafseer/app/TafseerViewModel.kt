@@ -20,9 +20,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class TafseerViewModel(
-    application: Application,
-    private val engine: TafseerEngine = defaultEngine()
+    application: Application
 ) : AndroidViewModel(application) {
+
+    // Keep a single Application-only constructor so the default Android ViewModel factory
+    // can instantiate this class reliably at app startup.
+    private val engine: TafseerEngine = defaultEngine()
 
     private val _uiState = MutableStateFlow<TafseerUiState>(TafseerUiState.Writing())
     val uiState: StateFlow<TafseerUiState> = _uiState.asStateFlow()
