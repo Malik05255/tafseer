@@ -30,6 +30,7 @@ class TafseerService(CompactTafseerService):
             if str(a.get("question_text", "")).strip()
         }
         can_ask = len(answers) < settings.max_questions
+        minimum_questions = min(settings.max_questions, self._recommended_min_questions(dream))
 
         try:
             local_knowledge = self.knowledge.retrieve(dream, limit=8)
@@ -37,7 +38,13 @@ class TafseerService(CompactTafseerService):
             knowledge = self._merge_knowledge(scripture_knowledge, local_knowledge, limit=18)
 
             prompt = TURN_PROMPT + "\n\n" + self._context(dream, answers, knowledge)
-            if not can_ask:
+            if can_ask and len(answers) < minimum_questions:
+                prompt += (
+                    f"\n\nهذه الرؤيا متعددة العناصر وتحتاج على الأقل {minimum_questions} إجابات توضيحية مؤثرة قبل النتيجة. "
+                    f"الموجود حاليًا {len(answers)} فقط. يجب في هذه الجولة إخراج action=question عن أهم مجهول واحد فقط. "
+                    "لا تسأل عن معلومة مذكورة أصلًا، ولا تجمع محورين في سؤال واحد."
+                )
+            elif not can_ask:
                 prompt += (
                     "\n\nبلغت المحادثة الحد الأقصى للأسئلة. ممنوع طرح سؤال جديد. "
                     "أخرج action=complete واختر طبيعة المنام الأقرب واشرح السبب دون استخدام غير محسوم."
@@ -46,11 +53,21 @@ class TafseerService(CompactTafseerService):
             decision = await self.models.generate_json(SYSTEM_PROMPT, prompt)
             action = str(decision.get("action", "")).strip().lower()
 
+            if action != "question" and can_ask and len(answers) < minimum_questions:
+                forced_prompt = (
+                    prompt
+                    + "\n\nأنت حاولت إنهاء التأويل قبل اكتمال الحد الأدنى من السياق. ممنوع complete الآن. "
+                    "أعد JSON من نوع action=question فقط. اسأل عن مجهول واحد مؤثر لم يُذكر جوابه في النص أو الإجابات."
+                )
+                decision = await self.models.generate_json(SYSTEM_PROMPT, forced_prompt)
+                action = str(decision.get("action", "")).strip().lower()
+
             if action == "question" and can_ask:
                 question = self._question_from_decision(
                     {"need_question": True, "question": decision.get("question")},
                     answered_ids,
                     answered_question_texts,
+                    dream=dream,
                 )
                 if question is not None:
                     return InterpretResponse(
@@ -61,8 +78,9 @@ class TafseerService(CompactTafseerService):
 
                 repair_prompt = (
                     prompt
-                    + "\n\nالسؤال الذي اقترحته مكرر أو غير صالح. لا تكرر أي سؤال سابق. "
-                    "إما اسأل سؤالًا مختلفًا مؤثرًا أو أخرج action=complete."
+                    + "\n\nالسؤال الذي اقترحته مكرر أو مركب أو يسأل عن معلومة مذكورة أصلًا. "
+                    "اسأل سؤالًا واحدًا ذريًا عن مجهول واحد فقط، ولا تسأل عما حُسم في نص المنام. "
+                    "إن كان الحد الأدنى للسياق لم يكتمل فلابد من سؤال صالح، وإلا فأخرج action=complete."
                 )
                 decision = await self.models.generate_json(SYSTEM_PROMPT, repair_prompt)
                 if str(decision.get("action", "")).strip().lower() == "question":
@@ -70,6 +88,7 @@ class TafseerService(CompactTafseerService):
                         {"need_question": True, "question": decision.get("question")},
                         answered_ids,
                         answered_question_texts,
+                        dream=dream,
                     )
                     if question is not None:
                         return InterpretResponse(
@@ -78,9 +97,40 @@ class TafseerService(CompactTafseerService):
                             question=question,
                         )
 
+                if len(answers) < minimum_questions:
+                    fallback = self._fallback_context_question(answers, answered_ids)
+                    if fallback is not None:
+                        return InterpretResponse(
+                            status="question",
+                            progress_checkpoint=min(90, 44 + len(answers) * 10),
+                            question=fallback,
+                        )
+
             raw_result = decision.get("result")
             if not isinstance(raw_result, dict):
                 raise AnalysisTechnicalFailure("turn_result_missing")
+
+            if can_ask and self._result_needs_more_context(raw_result, answers, dream):
+                context_prompt = (
+                    prompt
+                    + "\n\nالنتيجة المقترحة ما زالت تعتمد على سياق لم يثبته المستخدم، أو صنفت المنام كحديث نفس/مختلط قبل اكتمال السياق. "
+                    "لا تعرض نتيجة الآن. أخرج action=question فقط عن أهم معلومة واحدة يمكن أن تغيّر هذا الترجيح."
+                )
+                followup = await self.models.generate_json(SYSTEM_PROMPT, context_prompt)
+                question = self._question_from_decision(
+                    {"need_question": True, "question": followup.get("question")},
+                    answered_ids,
+                    answered_question_texts,
+                    dream=dream,
+                )
+                if question is None:
+                    question = self._fallback_context_question(answers, answered_ids)
+                if question is not None:
+                    return InterpretResponse(
+                        status="question",
+                        progress_checkpoint=min(92, 50 + len(answers) * 10),
+                        question=question,
+                    )
 
             clean = self._sanitize_result(raw_result, knowledge)
             try:
@@ -141,7 +191,13 @@ class TafseerService(CompactTafseerService):
             if not isinstance(item, dict):
                 continue
             ref = str(item.get("source_ref", "")).strip()
-            if ref:
+            source_type = str(item.get("source_type", "")).strip().lower()
+            grade_class = str(item.get("grade_class", "")).strip().lower()
+            if not ref:
+                continue
+            if source_type == "quran":
+                allowed[ref] = item
+            elif source_type in {"hadith", "sunnah", "hadith_accepted"} and grade_class in {"", "accepted"}:
                 allowed[ref] = item
 
         result: list[dict] = []
@@ -153,58 +209,39 @@ class TafseerService(CompactTafseerService):
                 continue
             claim = str(item.get("claim", "")).strip()
             explanation = str(item.get("explanation", "")).strip()
-            relation = str(item.get("relation", "contextual")).strip().lower()
-            if relation not in {"direct", "semantic", "contextual"}:
-                relation = "contextual"
-            if not claim or not explanation:
+            relation = str(item.get("relation", "semantic")).strip().lower()
+            if relation not in {"direct", "semantic"} or not claim or not explanation:
                 continue
 
-            if relation == "contextual":
-                result.append(
-                    {
-                        "claim": claim,
-                        "source_title": "سياق الرائي",
-                        "source_ref": "",
-                        "relation": "contextual",
-                        "explanation": explanation,
-                    }
-                )
-            else:
-                ref = str(item.get("source_ref", "")).strip()
-                source = allowed.get(ref)
-                if source is None:
-                    continue
+            ref = str(item.get("source_ref", "")).strip()
+            source = allowed.get(ref)
+            if source is None:
+                continue
 
-                source_type = str(source.get("source_type", "")).strip()
-                grade_class = str(source.get("grade_class", "")).strip()
+            source_type = str(source.get("source_type", "")).strip().lower()
+            if source_type == "quran" and relation == "direct":
+                relation = "semantic"
 
-                # A weak or unclassified narration can inform retrieval, but it is
-                # never allowed to become displayed evidence for the interpretation.
-                if source_type in {"hadith_weak", "hadith_unclassified"} or grade_class in {
-                    "weak", "unclassified"
-                }:
-                    continue
+            source_text = str(source.get("text", "")).strip()
+            if not source_text:
+                continue
+            if len(source_text) > 900:
+                source_text = source_text[:897].rstrip() + "…"
 
-                # Generic Quran keyword matches are semantic evidence by default.
-                # Direct dream interpretation requires a specifically verified case.
-                if source_type == "quran" and relation == "direct":
-                    relation = "semantic"
+            title = str(source.get("source_title", "")).strip() or "مصدر موثق"
+            grade = str(source.get("grade", "")).strip()
+            if source_type in {"hadith", "sunnah", "hadith_accepted"} and grade:
+                title = f"{title} — {grade}"
 
-                title = str(source.get("source_title", "")).strip()
-                grade = str(source.get("grade", "")).strip()
-                if source_type == "hadith_accepted" and grade:
-                    title = f"{title} — {grade}"
-
-                result.append(
-                    {
-                        "claim": claim,
-                        "source_title": title or "مصدر موثق",
-                        "source_ref": ref,
-                        "relation": relation,
-                        "explanation": explanation,
-                    }
-                )
-
-            if len(result) >= 6:
+            result.append(
+                {
+                    "claim": claim,
+                    "source_title": title,
+                    "source_ref": ref,
+                    "relation": relation,
+                    "explanation": source_text + "\n\nوجه الاستدلال: " + explanation,
+                }
+            )
+            if len(result) >= 2:
                 break
         return result
