@@ -468,6 +468,33 @@ private fun ResultScreen(
             )
         }
 
+        if (result.evidence.isNotEmpty()) {
+            DisclosureCard(
+                title = "كيف وصلنا لهذا التأويل؟",
+                expanded = evidenceExpanded,
+                onToggle = { evidenceExpanded = !evidenceExpanded }
+            ) {
+                result.evidence.forEachIndexed { index, point ->
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text(
+                            text = point.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Start
+                        )
+                        Spacer(Modifier.height(5.dp))
+                        Text(
+                            text = point.explanation,
+                            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 23.sp),
+                            textAlign = TextAlign.Start,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f)
+                        )
+                    }
+                    if (index != result.evidence.lastIndex) HorizontalDivider()
+                }
+            }
+        }
+
         if (result.references.isNotEmpty()) {
             DisclosureCard(
                 title = "الاستدلال",
@@ -516,35 +543,9 @@ private fun ResultScreen(
             }
         }
 
-        if (result.evidence.isNotEmpty()) {
-            DisclosureCard(
-                title = "كيف وصلنا لهذا التأويل؟",
-                expanded = evidenceExpanded,
-                onToggle = { evidenceExpanded = !evidenceExpanded }
-            ) {
-                result.evidence.forEachIndexed { index, point ->
-                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                        Text(
-                            text = point.title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Start
-                        )
-                        Text(
-                            text = point.explanation,
-                            style = MaterialTheme.typography.bodySmall,
-                            textAlign = TextAlign.Start,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
-                        )
-                    }
-                    if (index != result.evidence.lastIndex) HorizontalDivider()
-                }
-            }
-        }
-
         if (result.whyThisInterpretation.isNotBlank()) {
             DisclosureCard(
-                title = "لماذا؟",
+                title = "الخلاصة",
                 expanded = whyExpanded,
                 onToggle = { whyExpanded = !whyExpanded }
             ) {
