@@ -16,6 +16,8 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        val apiBaseUrl = (project.findProperty("TAFSEER_API_BASE_URL") as String?) ?: ""
+        buildConfigField("String", "TAFSEER_API_BASE_URL", "\"$apiBaseUrl\"")
     }
 
     buildFeatures {
