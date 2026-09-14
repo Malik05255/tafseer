@@ -16,7 +16,8 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        val apiBaseUrl = (project.findProperty("TAFSEER_API_BASE_URL") as String?) ?: ""
+        val apiBaseUrl = (project.findProperty("TAFSEER_API_BASE_URL") as String?)
+            ?: "https://tafseer-hai-api.onrender.com"
         buildConfigField("String", "TAFSEER_API_BASE_URL", "\"$apiBaseUrl\"")
     }
 
