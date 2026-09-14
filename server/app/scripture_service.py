@@ -137,6 +137,25 @@ class TafseerService(CompactTafseerService):
                     if isinstance(repaired_result, dict):
                         raw_result = repaired_result
 
+            # The user must be able to see why each major detail was mapped to a
+            # meaning. A generic evidence list is not sufficient.
+            if not self._evidence_explains_mapping(raw_result):
+                repair_prompt = (
+                    final_prompt
+                    + "\n\nرفض الخادم النتيجة السابقة لأن قسم evidence لم يشرح بوضوح: "
+                    "تفصيل من الرؤيا ← المعنى المرجح ← لماذا تم هذا الربط. "
+                    "أعد النتيجة كاملة واجعل كل evidence.title يبدأ بـ «من الرؤيا:»، "
+                    "وكل evidence.explanation يحتوي «المعنى المرجح:» و«لماذا هذا الربط:». "
+                    "لا تكشف سلسلة التفكير الداخلية؛ قدم تبريرًا موجزًا ومراجعًا فقط."
+                )
+                repaired = await self.models.generate_json(FINAL_SYSTEM_PROMPT, repair_prompt)
+                repaired_result = repaired.get("result")
+                if isinstance(repaired_result, dict):
+                    raw_result = repaired_result
+
+            if not self._evidence_explains_mapping(raw_result):
+                raise AnalysisTechnicalFailure("explanatory_evidence_missing")
+
             clean = self._sanitize_result(raw_result, knowledge)
             try:
                 result = FinalResult.model_validate(clean)
@@ -364,6 +383,27 @@ class TafseerService(CompactTafseerService):
             if any(cls._normalize_question_text(term) in value for term in _POSITIVE_REALITY_TERMS):
                 return True
         return False
+
+    @staticmethod
+    def _evidence_explains_mapping(raw_result: dict) -> bool:
+        if not isinstance(raw_result, dict):
+            return False
+        evidence = raw_result.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            return False
+
+        valid = 0
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "")).strip()
+            explanation = str(item.get("explanation", "")).strip()
+            if not title.startswith("من الرؤيا:"):
+                continue
+            if "المعنى" not in explanation or "لماذا" not in explanation:
+                continue
+            valid += 1
+        return valid >= 1
 
     @staticmethod
     def _merge_knowledge(primary: list[dict], secondary: list[dict], limit: int) -> list[dict]:
