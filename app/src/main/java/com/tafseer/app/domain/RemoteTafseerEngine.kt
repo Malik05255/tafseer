@@ -63,6 +63,14 @@ class RemoteTafseerEngine(
                     return@coroutineScope result
                 }
 
+                "error" -> {
+                    val message = response.optString(
+                        "message",
+                        "تعذر إكمال التحليل تقنيًا. حاول مرة أخرى."
+                    )
+                    throw IOException(message)
+                }
+
                 else -> throw IOException("Unknown Tafseer API state")
             }
         }
