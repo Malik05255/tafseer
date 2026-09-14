@@ -133,3 +133,78 @@ class TafseerService(CompactTafseerService):
             if len(result) >= limit:
                 break
         return result
+
+    @staticmethod
+    def _sanitize_references(raw_refs, knowledge: list[dict]) -> list[dict]:
+        allowed: dict[str, dict] = {}
+        for item in knowledge:
+            if not isinstance(item, dict):
+                continue
+            ref = str(item.get("source_ref", "")).strip()
+            if ref:
+                allowed[ref] = item
+
+        result: list[dict] = []
+        if not isinstance(raw_refs, list):
+            return result
+
+        for item in raw_refs:
+            if not isinstance(item, dict):
+                continue
+            claim = str(item.get("claim", "")).strip()
+            explanation = str(item.get("explanation", "")).strip()
+            relation = str(item.get("relation", "contextual")).strip().lower()
+            if relation not in {"direct", "semantic", "contextual"}:
+                relation = "contextual"
+            if not claim or not explanation:
+                continue
+
+            if relation == "contextual":
+                result.append(
+                    {
+                        "claim": claim,
+                        "source_title": "سياق الرائي",
+                        "source_ref": "",
+                        "relation": "contextual",
+                        "explanation": explanation,
+                    }
+                )
+            else:
+                ref = str(item.get("source_ref", "")).strip()
+                source = allowed.get(ref)
+                if source is None:
+                    continue
+
+                source_type = str(source.get("source_type", "")).strip()
+                grade_class = str(source.get("grade_class", "")).strip()
+
+                # A weak or unclassified narration can inform retrieval, but it is
+                # never allowed to become displayed evidence for the interpretation.
+                if source_type in {"hadith_weak", "hadith_unclassified"} or grade_class in {
+                    "weak", "unclassified"
+                }:
+                    continue
+
+                # Generic Quran keyword matches are semantic evidence by default.
+                # Direct dream interpretation requires a specifically verified case.
+                if source_type == "quran" and relation == "direct":
+                    relation = "semantic"
+
+                title = str(source.get("source_title", "")).strip()
+                grade = str(source.get("grade", "")).strip()
+                if source_type == "hadith_accepted" and grade:
+                    title = f"{title} — {grade}"
+
+                result.append(
+                    {
+                        "claim": claim,
+                        "source_title": title or "مصدر موثق",
+                        "source_ref": ref,
+                        "relation": relation,
+                        "explanation": explanation,
+                    }
+                )
+
+            if len(result) >= 6:
+                break
+        return result
