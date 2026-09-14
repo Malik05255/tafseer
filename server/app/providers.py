@@ -54,22 +54,49 @@ def _retryable(exc: Exception) -> bool:
 
 class ModelRouter:
     def __init__(self) -> None:
-        self.timeout = httpx.Timeout(70.0, connect=15.0)
+        self.timeout = httpx.Timeout(55.0, connect=12.0)
+
+    @staticmethod
+    def _gemini_models() -> list[str]:
+        # Keep quality first, but do not let a transient outage on one Gemini model
+        # take down the whole tafseer session. These are stable production models.
+        ordered = [
+            settings.primary_model,
+            "gemini-3.6-flash",
+            "gemini-2.5-flash",
+        ]
+        unique: list[str] = []
+        for model in ordered:
+            model = str(model or "").strip()
+            if model and model not in unique:
+                unique.append(model)
+        return unique
 
     async def generate_json(self, system: str, user: str) -> dict[str, Any]:
         errors: list[str] = []
 
         if settings.gemini_api_key:
-            try:
-                return await self._with_retry("gemini", lambda: self._gemini(system, user))
-            except Exception as exc:
-                label = _error_label(exc)
-                logger.warning("provider_failed provider=gemini error=%s", label)
-                errors.append(f"gemini:{label}")
+            for model in self._gemini_models():
+                try:
+                    return await self._with_retry(
+                        f"gemini:{model}",
+                        lambda model=model: self._gemini(system, user, model),
+                    )
+                except Exception as exc:
+                    label = _error_label(exc)
+                    logger.warning(
+                        "provider_failed provider=gemini model=%s error=%s",
+                        model,
+                        label,
+                    )
+                    errors.append(f"gemini:{model}:{label}")
 
         if settings.openrouter_api_key:
             try:
-                return await self._with_retry("openrouter", lambda: self._openrouter(system, user))
+                return await self._with_retry(
+                    "openrouter",
+                    lambda: self._openrouter(system, user),
+                )
             except Exception as exc:
                 label = _error_label(exc)
                 logger.warning("provider_failed provider=openrouter error=%s", label)
@@ -85,8 +112,8 @@ class ModelRouter:
         call: Callable[[], Awaitable[dict[str, Any]]],
     ) -> dict[str, Any]:
         last_error: Exception | None = None
-        # One retry is enough to absorb transient 429/5xx/timeout/invalid JSON without
-        # multiplying free-tier usage during a persistent outage.
+        # One short retry per model absorbs transient capacity/JSON issues. If that
+        # still fails, move to the next model instead of burning the whole timeout.
         for attempt in range(2):
             try:
                 return await call()
@@ -100,20 +127,19 @@ class ModelRouter:
                     attempt + 1,
                     _error_label(exc),
                 )
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.6)
         assert last_error is not None
         raise last_error
 
-    async def _gemini(self, system: str, user: str) -> dict[str, Any]:
+    async def _gemini(self, system: str, user: str, model: str) -> dict[str, Any]:
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{settings.primary_model}:generateContent"
+            f"{model}:generateContent"
         )
         payload = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": user}]}],
             "generationConfig": {
-                "temperature": 0.2,
                 "responseMimeType": "application/json",
             },
         }
