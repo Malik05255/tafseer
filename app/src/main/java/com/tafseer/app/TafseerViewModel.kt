@@ -1,7 +1,6 @@
 package com.tafseer.app
 
 import android.app.Application
-import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tafseer.app.domain.AiProviderUnavailableException
@@ -19,9 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class TafseerViewModel(
-    application: Application
-) : AndroidViewModel(application) {
+class TafseerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val engine: TafseerEngine = defaultEngine()
 
@@ -34,7 +31,7 @@ class TafseerViewModel(
     fun updateDream(text: String) {
         val current = _uiState.value
         if (current is TafseerUiState.Writing) {
-            _uiState.value = current.copy(dream = text)
+            _uiState.value = current.copy(dream = text, error = null)
         }
     }
 
@@ -78,26 +75,21 @@ class TafseerViewModel(
                         answer
                     }
                 )
-
                 _uiState.value = TafseerUiState.Result(dream, result)
             } catch (exc: AiProviderUnavailableException) {
                 clearPendingQuestion()
-                _uiState.value = TafseerUiState.Writing(dream)
-                Toast.makeText(
-                    getApplication(),
-                    "محرك التفسير غير مفعّل بعد. فعّل Gemini أو OpenRouter على الخادم ثم أعد المحاولة.",
-                    Toast.LENGTH_LONG
-                ).show()
+                _uiState.value = TafseerUiState.Writing(
+                    dream = dream,
+                    error = "محرك التفسير غير متاح الآن. حاول بعد قليل."
+                )
             } catch (exc: CancellationException) {
                 throw exc
             } catch (exc: Exception) {
                 clearPendingQuestion()
-                _uiState.value = TafseerUiState.Writing(dream)
-                Toast.makeText(
-                    getApplication(),
-                    "تعذر الاتصال بمحرك التفسير. احتفظنا بنص المنام ويمكنك إعادة المحاولة.",
-                    Toast.LENGTH_LONG
-                ).show()
+                _uiState.value = TafseerUiState.Writing(
+                    dream = dream,
+                    error = "الخدمة مشغولة الآن. حاول مرة أخرى."
+                )
             }
         }
     }
@@ -133,11 +125,7 @@ class TafseerViewModel(
     companion object {
         private fun defaultEngine(): TafseerEngine {
             val url = BuildConfig.TAFSEER_API_BASE_URL.trim()
-            return if (url.isNotBlank()) {
-                RemoteTafseerEngine(url)
-            } else {
-                LocalTafseerEngine()
-            }
+            return if (url.isNotBlank()) RemoteTafseerEngine(url) else LocalTafseerEngine()
         }
     }
 }

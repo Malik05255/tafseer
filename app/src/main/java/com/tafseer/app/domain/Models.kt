@@ -34,7 +34,7 @@ enum class DreamNature(val label: String) {
     COHERENT("منام مترابط نسبيًا"),
     MIXED("منام مختلط يحتمل أكثر من وجه"),
     DAILY_THOUGHTS("قد يغلب عليه حديث النفس"),
-    FRAGMENTED("منام شديد التشتت ولا يظهر له تأويل واضح"),
+    FRAGMENTED("منام شديد التشتت"),
     UNCERTAIN("النوع غير محسوم")
 }
 
@@ -50,7 +50,10 @@ data class InterpretationResult(
 )
 
 sealed interface TafseerUiState {
-    data class Writing(val dream: String = "") : TafseerUiState
+    data class Writing(
+        val dream: String = "",
+        val error: String? = null
+    ) : TafseerUiState
 
     data class Analyzing(
         val dream: String,

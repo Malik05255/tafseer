@@ -1,6 +1,5 @@
 package com.tafseer.app.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -23,14 +23,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,20 +68,26 @@ import com.tafseer.app.domain.TafseerUiState
 @Composable
 fun TafseerApp(viewModel: TafseerViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        // Render the current screen directly. The text editor keeps its own IME state.
-        when (val screenState = state) {
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        when (val current = state) {
             is TafseerUiState.Writing -> WritingScreen(
-                initialDream = screenState.dream,
+                initialDream = current.dream,
+                error = current.error,
                 onDreamChange = viewModel::updateDream,
                 onInterpret = viewModel::startInterpretation
             )
+
             is TafseerUiState.Analyzing -> AnalysisScreen(
-                state = screenState,
+                state = current,
                 onAnswer = viewModel::answerQuestion
             )
+
             is TafseerUiState.Result -> ResultScreen(
-                result = screenState.result,
+                result = current.result,
                 onEdit = viewModel::editCurrentDream,
                 onNew = viewModel::interpretAnother
             )
@@ -91,30 +96,40 @@ fun TafseerApp(viewModel: TafseerViewModel = viewModel()) {
 }
 
 @Composable
-private fun BrandHeader(modifier: Modifier = Modifier) {
-    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+private fun BrandHeader() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Box(
-            modifier = Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background(MaterialTheme.colorScheme.primary),
+            modifier = Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.primary),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Outlined.MenuBook, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
-        }
-        Spacer(Modifier.width(12.dp))
-        Column {
-            Text("تفسير HAI", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(
-                "تأويل متأنٍ، لا إجابة مستعجلة",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.58f)
+            Icon(
+                imageVector = Icons.Outlined.MenuBook,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(23.dp)
             )
         }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = "تفسير HAI",
+            style = MaterialTheme.typography.titleLarge
+        )
     }
 }
 
 @Composable
-private fun WritingScreen(initialDream: String, onDreamChange: (String) -> Unit, onInterpret: () -> Unit) {
-    // Keep the full TextFieldValue locally so Arabic IMEs can preserve composition/cursor state.
-    // Mirroring a plain String from StateFlow on every key event can cancel IME composition on some devices.
+private fun WritingScreen(
+    initialDream: String,
+    error: String?,
+    onDreamChange: (String) -> Unit,
+    onInterpret: () -> Unit
+) {
     var editorValue by remember {
         mutableStateOf(
             TextFieldValue(
@@ -127,150 +142,213 @@ private fun WritingScreen(initialDream: String, onDreamChange: (String) -> Unit,
     val canSubmit = dream.trim().length >= 8
 
     Column(
-        modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         BrandHeader()
-        Spacer(Modifier.height(8.dp))
-        Text("اكتب رؤيتك كما تتذكرها", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(20.dp))
+
         Text(
-            "اكتب التفاصيل كما حدثت، حتى التي تبدو غير مهمة. إذا احتاج التحليل معلومة مؤثرة فسيسألك أثناء التفسير فقط.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.66f),
-            lineHeight = 23.sp
+            text = "اكتب رؤياك",
+            style = MaterialTheme.typography.headlineLarge
         )
+
         OutlinedTextField(
             value = editorValue,
             onValueChange = { updated ->
                 editorValue = updated
                 onDreamChange(updated.text)
             },
-            modifier = Modifier.fillMaxWidth().height(300.dp),
+            modifier = Modifier.fillMaxWidth(),
             enabled = true,
             readOnly = false,
             singleLine = false,
-            placeholder = { Text("مثال: رأيت أنني في بيت قديم أعرفه، ثم دخل…", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)) },
-            shape = RoundedCornerShape(24.dp),
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-            supportingText = {
+            minLines = 9,
+            maxLines = 12,
+            placeholder = {
                 Text(
-                    text = if (dream.isBlank()) "كلما كان السرد أدق كان التحليل أفضل." else "${dream.length} حرف",
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.End
+                    text = "اكتب المنام كما تتذكره…",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.40f)
                 )
-            }
+            },
+            textStyle = MaterialTheme.typography.bodyLarge,
+            shape = RoundedCornerShape(22.dp),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Sentences
+            )
         )
+
+        Text(
+            text = "${dream.length} حرف",
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.End,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f)
+        )
+
+        if (error != null) {
+            ErrorBanner(error)
+        }
+
         Button(
             onClick = onInterpret,
             enabled = canSubmit,
-            modifier = Modifier.fillMaxWidth().height(58.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp),
             shape = RoundedCornerShape(18.dp)
         ) {
-            Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+            Icon(
+                imageVector = Icons.Outlined.AutoAwesome,
+                contentDescription = null,
+                modifier = Modifier.size(21.dp)
+            )
             Spacer(Modifier.width(9.dp))
-            Text("تفسير", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+            Text(
+                text = "فسّر الرؤيا",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold
+            )
         }
-        Text(
-            "لا يُبنى على التأويل حكم شرعي أو قرار مصيري. النتيجة اجتهادية وليست معرفة بالغيب.",
-            modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.48f),
-            lineHeight = 19.sp
-        )
+
+        Spacer(Modifier.height(20.dp))
     }
 }
 
 @Composable
-private fun AnalysisScreen(state: TafseerUiState.Analyzing, onAnswer: (String) -> Unit) {
+private fun ErrorBanner(message: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 13.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.ErrorOutline,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnalysisScreen(
+    state: TafseerUiState.Analyzing,
+    onAnswer: (String) -> Unit
+) {
     Column(
-        modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         BrandHeader()
-        Spacer(Modifier.height(54.dp))
+        Spacer(Modifier.height(56.dp))
+
         Box(contentAlignment = Alignment.Center) {
             CircularProgressIndicator(
                 progress = { state.progress / 100f },
-                modifier = Modifier.size(154.dp),
-                strokeWidth = 8.dp,
+                modifier = Modifier.size(126.dp),
+                strokeWidth = 7.dp,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("${state.progress}%", fontSize = 38.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    if (state.question == null) "يحلّل" else "بانتظارك",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-                )
-            }
+            Text(
+                text = "${state.progress}%",
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
-        Spacer(Modifier.height(30.dp))
-        Text(state.stage.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
+
+        Spacer(Modifier.height(26.dp))
         Text(
-            state.stageDetail,
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f),
-            lineHeight = 22.sp
+            text = if (state.question == null) state.stage.title else "سؤال للتوضيح",
+            style = MaterialTheme.typography.titleLarge,
+            textAlign = TextAlign.Center
         )
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(18.dp))
+
         LinearProgressIndicator(
             progress = { state.progress / 100f },
-            modifier = Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(5.dp)
+                .clip(CircleShape),
             trackColor = MaterialTheme.colorScheme.surfaceVariant
         )
-        AnimatedVisibility(visible = state.question != null) {
-            state.question?.let { question ->
-                ClarifyingQuestionCard(question, onAnswer, Modifier.padding(top = 28.dp, bottom = 24.dp))
-            }
-        }
-        if (state.question == null) {
-            Spacer(Modifier.height(34.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
-                Row(modifier = Modifier.padding(18.dp), verticalAlignment = Alignment.Top) {
-                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        "لا نسرّع العداد على حساب التحليل. قد يتوقف إذا ظهرت معلومة ناقصة يمكن أن تغيّر الترجيح.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        lineHeight = 22.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.68f)
-                    )
-                }
-            }
+
+        state.question?.let { question ->
+            ClarifyingQuestionCard(
+                question = question,
+                onAnswer = onAnswer,
+                modifier = Modifier.padding(top = 26.dp, bottom = 24.dp)
+            )
         }
     }
 }
 
 @Composable
-private fun ClarifyingQuestionCard(question: ClarifyingQuestion, onAnswer: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun ClarifyingQuestionCard(
+    question: ClarifyingQuestion,
+    onAnswer: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
     var textAnswer by remember(question.id) { mutableStateOf(TextFieldValue()) }
+
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(24.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        shape = RoundedCornerShape(22.dp)
     ) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-            Text("معلومة واحدة قبل أن نكمل", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            Text(question.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Text(
-                question.explanation,
-                style = MaterialTheme.typography.bodyMedium,
-                lineHeight = 22.sp,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.66f)
+                text = question.title,
+                style = MaterialTheme.typography.titleMedium
             )
+
             question.options.forEach { option ->
                 OutlinedButton(
                     onClick = { onAnswer(option.label) },
-                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
                     shape = RoundedCornerShape(15.dp)
-                ) { Text(option.label) }
+                ) {
+                    Text(
+                        text = option.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
+
             if (question.allowText) {
                 OutlinedTextField(
                     value = textAnswer,
@@ -278,113 +356,216 @@ private fun ClarifyingQuestionCard(question: ClarifyingQuestion, onAnswer: (Stri
                     modifier = Modifier.fillMaxWidth(),
                     enabled = true,
                     readOnly = false,
+                    minLines = 2,
+                    maxLines = 5,
                     placeholder = { Text(question.textHint) },
-                    shape = RoundedCornerShape(16.dp),
-                    minLines = 3
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = RoundedCornerShape(16.dp)
                 )
+
                 Button(
                     onClick = { onAnswer(textAnswer.text) },
                     enabled = textAnswer.text.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
                     shape = RoundedCornerShape(15.dp)
-                ) { Text("متابعة التحليل") }
+                ) {
+                    Text("متابعة", fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ResultScreen(result: InterpretationResult, onEdit: () -> Unit, onNew: () -> Unit) {
+private fun ResultScreen(
+    result: InterpretationResult,
+    onEdit: () -> Unit,
+    onNew: () -> Unit
+) {
     var whyExpanded by remember { mutableStateOf(false) }
+    var evidenceExpanded by remember { mutableStateOf(false) }
     var alternativesExpanded by remember { mutableStateOf(false) }
+
     Column(
-        modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Spacer(Modifier.height(8.dp))
-        BrandHeader()
         Spacer(Modifier.height(10.dp))
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("تفسير رؤيتك", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("والله أعلم", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+        BrandHeader()
+        Spacer(Modifier.height(18.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "التفسير",
+                style = MaterialTheme.typography.headlineSmall
+            )
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onEdit) {
+                Icon(
+                    imageVector = Icons.Outlined.Edit,
+                    contentDescription = "تعديل الرؤيا"
+                )
             }
-            IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, contentDescription = "تعديل الرؤيا") }
         }
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer), shape = RoundedCornerShape(18.dp)) {
-            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("طبيعة المنام", style = MaterialTheme.typography.labelMedium)
-                    Text(result.nature.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                }
-            }
+
+        Surface(
+            shape = RoundedCornerShape(50.dp),
+            color = MaterialTheme.colorScheme.primaryContainer
+        ) {
+            Text(
+                text = result.nature.label,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
         }
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(24.dp)) {
-            Text(result.interpretation, modifier = Modifier.padding(20.dp), style = MaterialTheme.typography.bodyLarge, lineHeight = 29.sp)
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(22.dp)
+        ) {
+            Text(
+                text = result.interpretation,
+                modifier = Modifier.padding(20.dp),
+                style = MaterialTheme.typography.bodyLarge
+            )
         }
+
         if (result.evidence.isNotEmpty()) {
-            Text("أبرز ما بُني عليه الترجيح", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
-                Column(modifier = Modifier.padding(horizontal = 18.dp)) {
-                    result.evidence.forEachIndexed { index, point ->
-                        Column(modifier = Modifier.padding(vertical = 14.dp)) {
-                            Text(point.title, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(4.dp))
-                            Text(point.explanation, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f), lineHeight = 21.sp)
-                        }
-                        if (index != result.evidence.lastIndex) HorizontalDivider()
+            DisclosureCard(
+                title = "القرائن",
+                expanded = evidenceExpanded,
+                onToggle = { evidenceExpanded = !evidenceExpanded }
+            ) {
+                result.evidence.forEachIndexed { index, point ->
+                    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Text(
+                            text = point.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = point.explanation,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)
+                        )
                     }
+                    if (index != result.evidence.lastIndex) HorizontalDivider()
                 }
             }
         }
-        ExpandableResultCard("لماذا هذا التفسير؟", whyExpanded, { whyExpanded = !whyExpanded }) {
-            Text(result.whyThisInterpretation, style = MaterialTheme.typography.bodyMedium, lineHeight = 23.sp)
+
+        if (result.whyThisInterpretation.isNotBlank()) {
+            DisclosureCard(
+                title = "لماذا؟",
+                expanded = whyExpanded,
+                onToggle = { whyExpanded = !whyExpanded }
+            ) {
+                Text(
+                    text = result.whyThisInterpretation,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
+
         if (result.alternatives.isNotEmpty()) {
-            ExpandableResultCard("احتمالات أخرى لم تُهمل", alternativesExpanded, { alternativesExpanded = !alternativesExpanded }) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            DisclosureCard(
+                title = "احتمال آخر",
+                expanded = alternativesExpanded,
+                onToggle = { alternativesExpanded = !alternativesExpanded }
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     result.alternatives.forEach { item ->
-                        Row(verticalAlignment = Alignment.Top) {
-                            Text("•", modifier = Modifier.padding(end = 8.dp))
-                            Text(item, style = MaterialTheme.typography.bodyMedium, lineHeight = 22.sp)
-                        }
+                        Text(
+                            text = "• $item",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
             }
         }
+
         Text(
-            result.caution,
+            text = "تأويل اجتهادي، والله أعلم.",
             modifier = Modifier.fillMaxWidth(),
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f),
-            lineHeight = 19.sp
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.52f)
         )
-        Button(onClick = onNew, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(17.dp)) {
-            Icon(Icons.Outlined.Refresh, contentDescription = null)
+
+        Button(
+            onClick = onNew,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Refresh,
+                contentDescription = null,
+                modifier = Modifier.size(21.dp)
+            )
             Spacer(Modifier.width(8.dp))
             Text("رؤيا جديدة", fontWeight = FontWeight.Bold)
         }
-        Spacer(Modifier.height(18.dp))
+
+        Spacer(Modifier.height(20.dp))
     }
 }
 
 @Composable
-private fun ExpandableResultCard(title: String, expanded: Boolean, onToggle: () -> Unit, content: @Composable () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
+private fun DisclosureCard(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(18.dp)
+    ) {
         Column {
             TextButton(
                 onClick = onToggle,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(title, modifier = Modifier.weight(1f), textAlign = TextAlign.Start, fontWeight = FontWeight.SemiBold)
-                Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                Text(
+                    text = title,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Start,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Icon(
+                    imageVector = if (expanded) {
+                        Icons.Outlined.KeyboardArrowUp
+                    } else {
+                        Icons.Outlined.KeyboardArrowDown
+                    },
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f)
+                )
             }
-            AnimatedVisibility(visible = expanded) {
-                Column(modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp)) { content() }
+
+            if (expanded) {
+                Column(
+                    modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp)
+                ) {
+                    content()
+                }
             }
         }
     }
