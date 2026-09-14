@@ -10,6 +10,7 @@ from .prompts import (
     EXTRACT_PROMPT,
     FINAL_PROMPT,
     QUESTION_PROMPT,
+    RECOVERY_QUESTION_PROMPT,
     SYSTEM_PROMPT,
     VERIFY_PROMPT,
 )
@@ -25,6 +26,7 @@ class TafseerService:
         dream = request.dream.strip()
         answers = [a.model_dump() for a in request.answers]
         answered_ids = {a["question_id"] for a in answers}
+        can_ask = len(answers) < settings.max_questions
         knowledge = self.knowledge.retrieve(dream)
 
         base_context = self._context(dream, answers, knowledge, fact_map=None)
@@ -36,24 +38,16 @@ class TafseerService:
             if isinstance(item, dict) and item.get("id")
         }
 
-        if len(answers) < settings.max_questions:
-            try:
-                decision = await self.models.generate_json(
-                    SYSTEM_PROMPT,
-                    QUESTION_PROMPT + "\n\n" + compact_context,
+        # Gate 1: before interpretation, actively ask for one missing piece of context
+        # when it can materially change the reading.
+        if can_ask:
+            question = await self._initial_context_question(compact_context, answered_ids)
+            if question is not None:
+                return InterpretResponse(
+                    status="question",
+                    progress_checkpoint=min(76, 34 + len(answers) * 14),
+                    question=question,
                 )
-                question_data = decision.get("question") if bool(decision.get("need_question")) else None
-                if question_data and question_data.get("id") not in answered_ids:
-                    if not question_data.get("options") and not question_data.get("allow_text"):
-                        question_data["allow_text"] = True
-                    question = Question.model_validate(question_data)
-                    return InterpretResponse(
-                        status="question",
-                        progress_checkpoint=min(76, 34 + len(answers) * 14),
-                        question=question,
-                    )
-            except (ProviderUnavailable, ValidationError, ValueError, KeyError, TypeError):
-                pass
 
         draft: dict = {}
         critique: dict = {}
@@ -80,6 +74,29 @@ class TafseerService:
             except (ProviderUnavailable, ValueError, KeyError, TypeError):
                 critique = {}
 
+        # Gate 2: if the critic discovers that the strongest reading depends on
+        # unknown user context, stop here and ask instead of forcing a conclusion.
+        if can_ask and self._critique_needs_context(critique, draft):
+            recovery_details = {
+                "stage": "critic",
+                "missing_context": critique.get("missing_context", []),
+                "unsupported_claims": critique.get("unsupported_claims", []),
+                "warnings": critique.get("warnings", []),
+                "uncertainties": draft.get("uncertainties", []) if isinstance(draft, dict) else [],
+                "required_assumptions": self._required_assumptions(draft),
+            }
+            question = await self._recovery_context_question(
+                compact_context,
+                recovery_details,
+                answered_ids,
+            )
+            if question is not None:
+                return InterpretResponse(
+                    status="question",
+                    progress_checkpoint=min(88, 62 + len(answers) * 10),
+                    question=question,
+                )
+
         final_context = compact_context
         if draft:
             final_context += "\n\nملخص المرشحات الداخلية:\n" + json.dumps(
@@ -90,12 +107,72 @@ class TafseerService:
                 critique, ensure_ascii=False, separators=(",", ":")
             )
 
-        result = await self._build_verified_result(
+        outcome = await self._build_verified_result(
             dream=dream,
             final_context=final_context,
+            compact_context=compact_context,
             valid_fact_ids=valid_fact_ids,
+            answered_ids=answered_ids,
+            can_ask=can_ask,
         )
-        return InterpretResponse(status="complete", progress_checkpoint=100, result=result)
+        if isinstance(outcome, Question):
+            return InterpretResponse(
+                status="question",
+                progress_checkpoint=min(94, 78 + len(answers) * 6),
+                question=outcome,
+            )
+        return InterpretResponse(status="complete", progress_checkpoint=100, result=outcome)
+
+    async def _initial_context_question(
+        self,
+        compact_context: str,
+        answered_ids: set[str],
+    ) -> Question | None:
+        try:
+            decision = await self.models.generate_json(
+                SYSTEM_PROMPT,
+                QUESTION_PROMPT + "\n\n" + compact_context,
+            )
+        except (ProviderUnavailable, ValidationError, ValueError, KeyError, TypeError):
+            return None
+        return self._question_from_decision(decision, answered_ids)
+
+    async def _recovery_context_question(
+        self,
+        compact_context: str,
+        trigger_details: dict,
+        answered_ids: set[str],
+    ) -> Question | None:
+        recovery_context = (
+            compact_context
+            + "\n\nسبب طلب محاولة سؤال توضيحي إضافي:\n"
+            + json.dumps(trigger_details, ensure_ascii=False, separators=(",", ":"))
+        )
+        try:
+            decision = await self.models.generate_json(
+                SYSTEM_PROMPT,
+                RECOVERY_QUESTION_PROMPT + "\n\n" + recovery_context,
+            )
+        except (ProviderUnavailable, ValidationError, ValueError, KeyError, TypeError):
+            return None
+        return self._question_from_decision(decision, answered_ids)
+
+    @staticmethod
+    def _question_from_decision(decision: dict, answered_ids: set[str]) -> Question | None:
+        if not isinstance(decision, dict) or not bool(decision.get("need_question")):
+            return None
+        question_data = decision.get("question")
+        if not isinstance(question_data, dict):
+            return None
+        question_id = str(question_data.get("id", "")).strip()
+        if not question_id or question_id in answered_ids:
+            return None
+        if not question_data.get("options") and not question_data.get("allow_text"):
+            question_data["allow_text"] = True
+        try:
+            return Question.model_validate(question_data)
+        except ValidationError:
+            return None
 
     async def _extract_facts(self, base_context: str) -> dict:
         try:
@@ -159,18 +236,50 @@ class TafseerService:
         sanitized["candidates"] = candidates[:8]
         return sanitized
 
+    @staticmethod
+    def _required_assumptions(draft: dict) -> list[str]:
+        assumptions: list[str] = []
+        if not isinstance(draft, dict):
+            return assumptions
+        for candidate in draft.get("candidates", []):
+            if not isinstance(candidate, dict):
+                continue
+            for item in candidate.get("required_assumptions", []):
+                if isinstance(item, str) and item.strip() and item.strip() not in assumptions:
+                    assumptions.append(item.strip())
+                    if len(assumptions) >= 8:
+                        return assumptions
+        return assumptions
+
+    @classmethod
+    def _critique_needs_context(cls, critique: dict, draft: dict) -> bool:
+        if not isinstance(critique, dict):
+            return False
+        missing = critique.get("missing_context", [])
+        if isinstance(missing, list) and any(isinstance(x, str) and x.strip() for x in missing):
+            return True
+        if cls._required_assumptions(draft):
+            return True
+        preferred = str(critique.get("preferred", "")).strip()
+        confidence = str(critique.get("confidence", "")).strip().lower()
+        return confidence == "low" or "لا يوجد ترجيح" in preferred
+
     async def _build_verified_result(
         self,
         dream: str,
         final_context: str,
+        compact_context: str,
         valid_fact_ids: set[str],
-    ) -> FinalResult:
+        answered_ids: set[str],
+        can_ask: bool,
+    ) -> FinalResult | Question:
         try:
             raw = await self.models.generate_json(
                 SYSTEM_PROMPT,
                 FINAL_PROMPT + "\n\n" + final_context,
             )
         except (ProviderUnavailable, ValueError, KeyError, TypeError):
+            # Technical/provider failure: asking the user more context would not fix it.
             return self._safe_fallback(dream)
 
         if not self._python_grounding_ok(raw, valid_fact_ids):
@@ -184,12 +293,45 @@ class TafseerService:
 
         verification = await self._verify_result(final_context, raw)
         if not verification.get("pass", False):
+            missing_context = verification.get("missing_context", [])
+            if can_ask and isinstance(missing_context, list) and any(
+                isinstance(x, str) and x.strip() for x in missing_context
+            ):
+                question = await self._recovery_context_question(
+                    compact_context,
+                    {
+                        "stage": "final_verifier",
+                        "missing_context": missing_context,
+                        "unsupported_claims": verification.get("unsupported_claims", []),
+                        "reason": verification.get("reason", ""),
+                    },
+                    answered_ids,
+                )
+                if question is not None:
+                    return question
+
             unsupported = verification.get("unsupported_claims", [])
             raw = await self._retry_after_rejection(final_context, raw, unsupported)
             if not self._python_grounding_ok(raw, valid_fact_ids):
                 return self._insufficient_evidence_result()
             verification = await self._verify_result(final_context, raw)
             if not verification.get("pass", False):
+                missing_context = verification.get("missing_context", [])
+                if can_ask and isinstance(missing_context, list) and any(
+                    isinstance(x, str) and x.strip() for x in missing_context
+                ):
+                    question = await self._recovery_context_question(
+                        compact_context,
+                        {
+                            "stage": "final_verifier_retry",
+                            "missing_context": missing_context,
+                            "unsupported_claims": verification.get("unsupported_claims", []),
+                            "reason": verification.get("reason", ""),
+                        },
+                        answered_ids,
+                    )
+                    if question is not None:
+                        return question
                 return self._insufficient_evidence_result()
 
         try:
@@ -208,7 +350,12 @@ class TafseerService:
                 + json.dumps(raw, ensure_ascii=False, separators=(",", ":")),
             )
         except (ProviderUnavailable, ValueError, KeyError, TypeError):
-            return {"pass": False, "unsupported_claims": ["تعذر إجراء التدقيق النهائي."]}
+            return {
+                "pass": False,
+                "unsupported_claims": ["تعذر إجراء التدقيق النهائي."],
+                "missing_context": [],
+                "reason": "technical_verification_failure",
+            }
 
     async def _retry_after_rejection(
         self,
@@ -262,7 +409,7 @@ class TafseerService:
         fact_text = json.dumps(fact_map or {}, ensure_ascii=False, separators=(",", ":"))
         return (
             "نص المنام كما كتبه المستخدم:\n" + dream
-            + "\n\nإجابات التوضيح:\n" + answers_text
+            + "\n\nإجابات التوضيح السابقة (لا تكرر معناها):\n" + answers_text
             + "\n\nخريطة الحقائق الصريحة المستخرجة:\n" + fact_text
             + "\n\nالمعرفة المسترجعة الموثقة فقط:\n" + knowledge_text
             + "\n\nمهم: غياب مصدر موثق يعني عدم نسبة قول إلى كتاب أو عالم. "
@@ -274,7 +421,7 @@ class TafseerService:
         return FinalResult(
             interpretation=(
                 "لا تكفي القرائن الحالية لترجيح تفسير محدد دون إضافة افتراضات من خارج المنام. "
-                "الأفضل التوقف هنا بدل بناء معنى مقنع شكليًا لا يسنده النص."
+                "بعد طلب التوضيحات المفيدة المتاحة، الأفضل التوقف هنا بدل بناء معنى مقنع شكليًا لا يسنده النص."
             ),
             nature="uncertain",
             nature_label="الترجيح غير كافٍ",
@@ -291,13 +438,13 @@ class TafseerService:
         length_label = "مترابط نسبيًا" if len(dream) >= 120 else "مختصر ويحتمل أكثر من وجه"
         return FinalResult(
             interpretation=(
-                "تعذر إكمال مسار التأويل الموثق في هذه المحاولة، لذلك لن أختلق تفسيرًا من رموز منفصلة. "
-                "يمكن إعادة المحاولة لاحقًا."
+                "تعذر إكمال مسار التأويل الموثق بسبب تعثر تقني في هذه المحاولة، لذلك لن أختلق تفسيرًا من رموز منفصلة. "
+                "إضافة معلومات عن الرؤيا لن تصلح هذا النوع من الخطأ؛ يمكن إعادة المحاولة لاحقًا."
             ),
             nature="uncertain",
             nature_label=length_label,
             evidence=[],
             alternatives=[],
-            why_this_interpretation="تم اختيار الامتناع عن التخمين لأن مسار التحقق لم يكتمل.",
+            why_this_interpretation="تم اختيار الامتناع عن التخمين لأن مسار التحقق التقني لم يكتمل.",
             caution="لا توجد نتيجة تفسيرية موثوقة في هذه المحاولة. والله أعلم.",
         )
