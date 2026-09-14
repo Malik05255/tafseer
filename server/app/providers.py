@@ -1,10 +1,15 @@
+import asyncio
 import json
+import logging
 import re
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
 from .config import settings
+
+
+logger = logging.getLogger("tafseer.providers")
 
 
 class ProviderUnavailable(RuntimeError):
@@ -17,38 +22,87 @@ def _extract_json(text: str) -> dict[str, Any]:
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", text, re.S)
         if not match:
             raise
-        return json.loads(match.group(0))
+        parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise ValueError("Provider returned JSON that is not an object")
+    return parsed
+
+
+def _error_label(exc: Exception) -> str:
+    # Never include request URLs here: the Gemini key is a query parameter.
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"http_{exc.response.status_code}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json"
+    return type(exc).__name__
+
+
+def _retryable(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+    return isinstance(exc, (json.JSONDecodeError, ValueError, KeyError, TypeError))
 
 
 class ModelRouter:
     def __init__(self) -> None:
         self.timeout = httpx.Timeout(70.0, connect=15.0)
 
-    suspend_placeholder = None
-
     async def generate_json(self, system: str, user: str) -> dict[str, Any]:
         errors: list[str] = []
 
         if settings.gemini_api_key:
             try:
-                return await self._gemini(system, user)
-            except Exception as exc:  # fallback must survive provider outages/quotas
-                errors.append(f"gemini: {exc}")
+                return await self._with_retry("gemini", lambda: self._gemini(system, user))
+            except Exception as exc:
+                label = _error_label(exc)
+                logger.warning("provider_failed provider=gemini error=%s", label)
+                errors.append(f"gemini:{label}")
 
         if settings.openrouter_api_key:
             try:
-                return await self._openrouter(system, user)
+                return await self._with_retry("openrouter", lambda: self._openrouter(system, user))
             except Exception as exc:
-                errors.append(f"openrouter: {exc}")
+                label = _error_label(exc)
+                logger.warning("provider_failed provider=openrouter error=%s", label)
+                errors.append(f"openrouter:{label}")
 
         if not errors:
             raise ProviderUnavailable("No AI provider key configured")
         raise ProviderUnavailable("All configured AI providers failed: " + " | ".join(errors))
+
+    async def _with_retry(
+        self,
+        provider: str,
+        call: Callable[[], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        last_error: Exception | None = None
+        # One retry is enough to absorb transient 429/5xx/timeout/invalid JSON without
+        # multiplying free-tier usage during a persistent outage.
+        for attempt in range(2):
+            try:
+                return await call()
+            except Exception as exc:
+                last_error = exc
+                if attempt == 1 or not _retryable(exc):
+                    raise
+                logger.info(
+                    "provider_retry provider=%s attempt=%s error=%s",
+                    provider,
+                    attempt + 1,
+                    _error_label(exc),
+                )
+                await asyncio.sleep(0.8)
+        assert last_error is not None
+        raise last_error
 
     async def _gemini(self, system: str, user: str) -> dict[str, Any]:
         url = (
@@ -76,6 +130,8 @@ class ModelRouter:
             raise ProviderUnavailable("Gemini returned no candidate")
         parts = candidates[0].get("content", {}).get("parts", [])
         text = "".join(part.get("text", "") for part in parts)
+        if not text.strip():
+            raise ValueError("Gemini returned empty text")
         return _extract_json(text)
 
     async def _openrouter(self, system: str, user: str) -> dict[str, Any]:
@@ -101,5 +157,10 @@ class ModelRouter:
             )
             response.raise_for_status()
             data = response.json()
-        content = data["choices"][0]["message"]["content"]
+        choices = data.get("choices") or []
+        if not choices:
+            raise ProviderUnavailable("OpenRouter returned no choice")
+        content = choices[0].get("message", {}).get("content", "")
+        if not content.strip():
+            raise ValueError("OpenRouter returned empty content")
         return _extract_json(content)
