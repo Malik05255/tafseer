@@ -23,8 +23,6 @@ class TafseerViewModel(
     application: Application
 ) : AndroidViewModel(application) {
 
-    // Keep a single Application-only constructor so the default Android ViewModel factory
-    // can instantiate this class reliably at app startup.
     private val engine: TafseerEngine = defaultEngine()
 
     private val _uiState = MutableStateFlow<TafseerUiState>(TafseerUiState.Writing())
@@ -97,7 +95,7 @@ class TafseerViewModel(
                 _uiState.value = TafseerUiState.Writing(dream)
                 Toast.makeText(
                     getApplication(),
-                    "تعذر الاتصال بمحرك التفسير. احتفظنا بنص الرؤيا ويمكنك إعادة المحاولة.",
+                    "تعذر الاتصال بمحرك التفسير. احتفظنا بنص المنام ويمكنك إعادة المحاولة.",
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -107,7 +105,13 @@ class TafseerViewModel(
     fun answerQuestion(value: String) {
         val question = pendingQuestion ?: return
         if (value.isBlank()) return
-        pendingAnswer?.complete(QuestionAnswer(question.id, value.trim()))
+        pendingAnswer?.complete(
+            QuestionAnswer(
+                questionId = question.id,
+                questionText = question.title,
+                value = value.trim()
+            )
+        )
     }
 
     fun interpretAnother() {
