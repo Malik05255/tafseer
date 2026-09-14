@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: tafseer-hai-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    rootDir: server
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: TAFSEER_GEMINI_API_KEY
+        sync: false
+      - key: TAFSEER_OPENROUTER_API_KEY
+        sync: false
+      - key: TAFSEER_PRIMARY_MODEL
+        value: gemini-3.8-flash
+      - key: TAFSEER_OPENROUTER_MODEL
+        value: openrouter/free
+      - key: TAFSEER_KNOWLEDGE_DB_PATH
+        value: knowledge/tafseer.db
+      - key: TAFSEER_MAX_QUESTIONS
+        value: "3"
