@@ -68,8 +68,6 @@ class TafseerService:
                         question=question,
                     )
 
-                # Duplicate or malformed questions are uncommon. One repair call is
-                # allowed so the user is not trapped in a loop.
                 repair_prompt = (
                     prompt
                     + "\n\nالسؤال الذي اقترحته مكرر أو غير صالح. لا تكرر أي سؤال سابق. "
@@ -192,56 +190,65 @@ class TafseerService:
 
     @staticmethod
     def _sanitize_references(raw_refs, knowledge: list[dict]) -> list[dict]:
-        allowed_by_ref: dict[str, str] = {}
+        allowed_by_ref: dict[str, dict] = {}
         for item in knowledge:
             if not isinstance(item, dict):
                 continue
             ref = str(item.get("source_ref", "")).strip()
             if not ref:
                 continue
-            title = str(item.get("source_title", "")).strip()
-            if not title and item.get("kind") == "case":
-                title = "حالة موثقة"
-            allowed_by_ref[ref] = title
+
+            source_type = str(item.get("source_type", "")).strip().lower()
+            if source_type == "quran":
+                allowed_by_ref[ref] = item
+                continue
+
+            if source_type in {"hadith", "sunnah"}:
+                grade_class = str(item.get("grade_class", "")).strip().lower()
+                if grade_class == "accepted":
+                    allowed_by_ref[ref] = item
 
         result: list[dict] = []
         if not isinstance(raw_refs, list):
             return result
+
         for item in raw_refs:
             if not isinstance(item, dict):
                 continue
             claim = str(item.get("claim", "")).strip()
             explanation = str(item.get("explanation", "")).strip()
-            relation = str(item.get("relation", "contextual")).strip().lower()
-            if relation not in {"direct", "semantic", "contextual"}:
-                relation = "contextual"
+            relation = str(item.get("relation", "semantic")).strip().lower()
+            if relation not in {"direct", "semantic"}:
+                continue
             if not claim or not explanation:
                 continue
 
-            if relation == "contextual":
-                result.append(
-                    {
-                        "claim": claim,
-                        "source_title": "سياق الرائي",
-                        "source_ref": "",
-                        "relation": "contextual",
-                        "explanation": explanation,
-                    }
-                )
-            else:
-                ref = str(item.get("source_ref", "")).strip()
-                if ref not in allowed_by_ref:
-                    continue
-                result.append(
-                    {
-                        "claim": claim,
-                        "source_title": allowed_by_ref[ref] or str(item.get("source_title", "")).strip(),
-                        "source_ref": ref,
-                        "relation": relation,
-                        "explanation": explanation,
-                    }
-                )
-            if len(result) >= 6:
+            ref = str(item.get("source_ref", "")).strip()
+            source = allowed_by_ref.get(ref)
+            if source is None:
+                continue
+
+            source_text = str(source.get("text", "")).strip()
+            if not source_text:
+                continue
+            if len(source_text) > 900:
+                source_text = source_text[:897].rstrip() + "…"
+
+            title = str(source.get("source_title", "")).strip() or str(item.get("source_title", "")).strip()
+            visible_explanation = source_text
+            if explanation:
+                visible_explanation += "\n\nوجه الاستدلال: " + explanation
+
+            result.append(
+                {
+                    "claim": claim,
+                    "source_title": title,
+                    "source_ref": ref,
+                    "relation": relation,
+                    "explanation": visible_explanation,
+                }
+            )
+            if len(result) >= 2:
                 break
         return result
 
