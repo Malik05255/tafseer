@@ -32,11 +32,20 @@ class Evidence(BaseModel):
     explanation: str
 
 
+class SourceEvidence(BaseModel):
+    claim: str
+    source_title: str
+    source_ref: str
+    relation: Literal["direct", "semantic", "contextual"]
+    explanation: str
+
+
 class FinalResult(BaseModel):
     interpretation: str
     nature: Literal["coherent", "mixed", "daily_thoughts", "fragmented", "uncertain"]
     nature_label: str
     evidence: list[Evidence]
+    references: list[SourceEvidence] = []
     alternatives: list[str]
     why_this_interpretation: str
     caution: str = "هذا تأويل اجتهادي وليس حكمًا يقينيًا، والله أعلم."
