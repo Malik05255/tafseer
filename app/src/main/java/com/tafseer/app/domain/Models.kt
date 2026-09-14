@@ -24,7 +24,11 @@ data class ClarifyingQuestion(
     val textHint: String = "اكتب إجابتك هنا…"
 )
 
-data class QuestionAnswer(val questionId: String, val value: String)
+data class QuestionAnswer(
+    val questionId: String,
+    val questionText: String,
+    val value: String
+)
 
 enum class DreamNature(val label: String) {
     COHERENT("منام مترابط نسبيًا"),
