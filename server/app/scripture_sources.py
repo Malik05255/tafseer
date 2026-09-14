@@ -13,9 +13,9 @@ _WORDS = re.compile(r"[\u0621-\u063A\u0641-\u064A]{3,}")
 _TAGS = re.compile(r"<[^>]+>")
 _STOPWORDS = {
     "كان", "كانت", "كنت", "فيه", "فيها", "هذا", "هذه", "ذلك", "الذي", "التي",
-    "على", "الى", "إلى", "عن", "من", "ثم", "بعد", "بعدين", "بس", "معه", "معها",
-    "انا", "أنا", "هو", "هي", "هم", "احنا", "نحن", "رأيت", "شفت", "حلمت", "رؤيا",
-    "رؤية", "منام", "شيء", "شي", "مرة", "جدا", "كأنه", "كأن", "صار", "جاء", "راح",
+    "علي", "الى", "عن", "من", "ثم", "بعد", "بعدين", "بس", "معه", "معها",
+    "انا", "هو", "هي", "هم", "احنا", "نحن", "رايت", "شفت", "حلمت", "رؤيا",
+    "رؤيه", "منام", "المنام", "شيء", "شي", "مره", "جدا", "كانه", "صار", "جاء", "راح",
 }
 
 
@@ -27,7 +27,12 @@ def _normalize_arabic(text: str) -> str:
 def _keywords(text: str, limit: int = 5) -> list[str]:
     normalized = _normalize_arabic(text.lower())
     result: list[str] = []
-    for word in _WORDS.findall(normalized):
+    for raw_word in _WORDS.findall(normalized):
+        word = raw_word
+        if len(word) > 4 and word.startswith("و"):
+            candidate = word[1:]
+            if candidate not in _STOPWORDS:
+                word = candidate
         if word in _STOPWORDS or word in result:
             continue
         result.append(word)
@@ -40,7 +45,7 @@ def _grade_class(grade: str) -> str:
     value = _normalize_arabic(grade.lower())
     weak_markers = (
         "ضعيف", "موضوع", "منكر", "باطل", "لا يصح", "لا يثبت", "كذاب", "متروك",
-        "واه", "انقطاع", "منقطع", "مجهول", "اضطراب",
+        "اسناده واه", "حديث واه", "انقطاع", "منقطع", "مجهول", "اضطراب",
     )
     if any(marker in value for marker in weak_markers):
         return "weak"
