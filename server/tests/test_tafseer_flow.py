@@ -190,6 +190,32 @@ class TafseerFlowTests(unittest.TestCase):
         self.assertFalse(TafseerService._positive_reality_support(no_answers))
         self.assertTrue(TafseerService._positive_reality_support(yes_answers))
 
+    def test_generic_evidence_without_mapping_is_rejected(self):
+        result = {
+            "evidence": [
+                {
+                    "title": "حفل الاعتزال",
+                    "explanation": "هذه قرينة مهمة في المنام.",
+                }
+            ]
+        }
+        self.assertFalse(TafseerService._evidence_explains_mapping(result))
+
+    def test_explanatory_evidence_mapping_is_accepted(self):
+        result = {
+            "evidence": [
+                {
+                    "title": "من الرؤيا: تردد الجد ثم موافقته",
+                    "explanation": (
+                        "المعنى المرجح: انتقال من المنع إلى القبول.\n"
+                        "لماذا هذا الربط: لأن التحول وقع داخل المشهد نفسه وكان نهايته.\n"
+                        "نوع السند: سياق الرؤيا"
+                    ),
+                }
+            ]
+        }
+        self.assertTrue(TafseerService._evidence_explains_mapping(result))
+
     def test_missing_context_triggers_recovery(self):
         critique = {
             "preferred": "لا يوجد ترجيح كافٍ",
